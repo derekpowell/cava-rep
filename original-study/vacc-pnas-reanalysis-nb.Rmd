@@ -1,0 +1,220 @@
+---
+title: "PNAS re-analysis notebook"
+author: "Derek Powell"
+output: 
+  html_notebook: 
+    code_folding: hide
+---
+
+This is a notebook to re-analyze the data from the PNAS paper "Countering Antivaccination Attitudes" using more appropriate statistical methods, such as ordinal HLM and beta regression. These analyses are being conducted in anticipation of a follow-up replication study.
+
+# Beta Regression
+
+Beta regression is a more appropriate approach to analyzing bounded, skewed, and heteroscedastic data. Which is exactly what our vaccine attitude scale measures are. 
+
+For more info, see [this paper](https://www.ncbi.nlm.nih.gov/pubmed/16594767), cited below.
+
+> Smithson M, Verkuilen J: A better lemon squeezer? Maximum-likelihood regression with beta-distributed dependent variables. Psychol Methods. 2006, 11 (1): 54-71.)
+
+Also good to read the [betareg vignette](https://cran.r-project.org/web/packages/betareg/vignettes/betareg.pdf) (or run `vignette("betareg")`).
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(brms)
+
+vaccAll <- read.csv("vacc-hphh-pubdata.csv") %>% 
+  as_tibble() %>% 
+  mutate(Participant = seq(1:n())) %>%
+  filter(EligibleToReturn==1)
+
+vaccW <- vaccAll %>%
+  mutate(PreTest = PreTestVaccinationAttitude, PostTest = PostTest.Vaccination.Attitude) %>%
+  filter(Returned==1, Excluded==0) %>%
+  mutate(Condition = relevel(Condition, ref="Control"))
+
+# vacc <- vaccAll %>% 
+#   mutate(PreTest = scale(PreTestVaccinationAttitude)) %>%
+#   filter(Returned==1, Excluded==0) %>% 
+#   group_by(Participant) %>% 
+#   rename( 
+#        Healthy=Healthy_VaxscalePosttest,
+#        Diseases=Diseases_VaxScalePosttest_Reversed,
+#        Doctors=Doctors_VaxScalePostTest,
+#        SideEffects=Sideeffects_VaxScalePostTest_Reversed,
+#        PlanTo=Planto_VaxScalePostTest
+#        ) %>% 
+#   gather(Item, 
+#          Agree, 
+#          Healthy,
+#          Diseases,
+#          Doctors,
+#          SideEffects,
+#          PlanTo
+#          ) %>% 
+  # rename(
+  #      Healthy=Healthy_VaxscalePretest,
+  #      Diseases=Diseases_VaxScalePretest_Reversed,
+  #      Doctors=Doctors_VaxScalePreTest,
+  #      SideEffects=Sideeffects_VaccScalePreTest_Reversed,
+  #      PlanTo=Planto_VaxScalePreTest
+  #      )# %>%
+  # gather(Item, 
+  #      PreAgree, 
+  #      Healthy,
+  #      Diseases,
+  #      Doctors,
+  #      SideEffects,
+  #      PlanTo
+  #      ) %>% 
+  # mutate(Condition = relevel(Condition, ref="Control"))
+
+```
+
+
+## OLS analysis
+
+```{r}
+fit.ols <- lm(PostTest ~ scale(PreTest) * Condition, data=vaccW)
+summary(fit.ols)
+```
+
+## Beta Regression
+
+Now we can run a beta regression using the `betareg` package. This uses maximum-likelihood estimation and provides frequentist p-values, etc. Before conducting beta regression, the response variable must be rescaled on to the bounded (exclusive) interval $(0, 1)$.
+
+```{r}
+library(betareg)
+set.seed(123)
+
+rescaleBeta <- function(x, lower, upper) {
+  # rescales onto the open interval (0,1)
+  # rescales over theoretical bounds of measurement, specified by "upper" and "lower"
+  # based on Smithson & Verkuilen (2006), though this is not as principled as you might think
+  # see http://dx.doi.org/10.1037/1082-989X.11.1.54.supp
+  
+  N <- length(x)
+  res <- (x-lower)/(upper - lower)
+  res <- (res*(N-1) + .5)/N
+
+  return(as.vector(res))
+}
+
+rescaleBeta2 <- function(x, lower, upper) {
+  # rescales onto the interval ~(.0001, ~.999)
+  # kind of hacky
+  
+  N <- length(x)
+  err <- .001
+  res <- (x-lower+err)/(upper - lower) * (1-err)
+  # res <- (res*(N-1) + .5)/N
+
+  return(as.vector(res))
+}
+
+fit.beta <- betareg(PostTest ~ PreTest + Condition,
+                    data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)))
+summary(fit.beta)
+
+```
+
+Comparing models ...
+
+```{r}
+fit.olsScaled <- lm(PostTest ~ scale(PreTest) + Condition, data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)))
+
+AIC(fit.olsScaled)
+AIC(fit.beta)
+
+```
+
+The beta regression model is **MUCH** preferred by AIC. Its results are also more sensible, capturing the main effect of Disease Risk intervention without the spurious interaction induced by the scale bounds and/or regression to the mean. (Comparing models within the beta family, a non-interactive model is slightly preferred, which is what I showed above).
+
+
+```{r}
+
+vaccW %>% 
+  select(Condition, PreTest, PostTest) %>%
+  mutate(PostTest=rescaleBeta(PostTest,1,6)) %>%
+  bind_cols(predict(fit.beta) %>% as_tibble()) %>%
+  rename(predictionBeta=value) %>%
+  bind_cols(predict(fit.olsScaled) %>% as_tibble()) %>%
+  rename(predictionOLS=value) %>%
+
+ggplot(aes(x = PreTest, y = PostTest, color=Condition)) +
+  geom_jitter(height=.1, width=.05, alpha=.8, shape=1) +
+  geom_line(aes(y = predictionBeta, linetype="Beta")) +
+  geom_line(aes(y = predictionOLS, linetype="OLS")) +
+  # geom_line(aes(y = predict(fit.ols, vaccW),
+  #               colour = "OLS", linetype = "OLS")) +
+  # scale_colour_manual("", values = c("red", "blue")) +
+  scale_linetype_manual("", values = c("solid", "dashed")) +
+  theme_bw()
+```
+
+## with BRMS
+
+Now for fun, we can do this in BRMS for both models. Short answer is everything looks exactly the same.
+
+```{r}
+library(brms)
+fit.bGaussian <- brm(
+  PostTest ~ PreTest + Condition,
+  data=vaccW,
+  family=gaussian(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .80),
+  cores = parallel::detectCores(),
+  iter = 2000)
+
+summary(fit.bGaussian)
+```
+
+
+```{r}
+fit.bBeta <- brm(
+  PostTest ~ PreTest + Condition,
+  data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)),
+  family=Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .80),
+  cores = parallel::detectCores(),
+  iter = 2000)
+
+summary(fit.bBeta)
+```
+
+And we can compare the models using loo (analogous to AIC). Again, beta does far better.
+
+```{r}
+loo(fit.bBeta)
+loo(fit.bGaussian)
+```
+
+And finally we can create marginal effects plots from both models. Ignoring the scale differences, they look pretty similar.
+
+```{r}
+me1 <- marginal_effects(fit.bBeta, effects="Condition",probs=c(.25,.75))
+plt.me1 <- plot(me1, 
+                effects="Condition",
+                plot=FALSE,
+                rug=TRUE,
+                theme=ggplot2::theme_get()
+                )[[1]] + labs(title="Beta") + theme_bw()
+
+me2 <- marginal_effects(fit.bGaussian, effects="Condition",probs=c(.25,.75))
+plt.me2 <- plot(me2, 
+                effects="Condition",
+                plot=FALSE,
+                rug=TRUE,
+                theme=ggplot2::theme_get()
+                )[[1]] + labs(title="OLS") + theme_bw()
+
+library(gridExtra)
+grid.arrange(plt.me1, plt.me2, ncol=2)
+
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```
+
