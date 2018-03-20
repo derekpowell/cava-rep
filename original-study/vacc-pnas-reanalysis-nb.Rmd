@@ -28,53 +28,27 @@ vaccAll <- read.csv("vacc-hphh-pubdata.csv") %>%
   filter(EligibleToReturn==1)
 
 vaccW <- vaccAll %>%
-  mutate(PreTest = PreTestVaccinationAttitude, PostTest = PostTest.Vaccination.Attitude) %>%
-  filter(Returned==1, Excluded==0) %>%
-  mutate(Condition = relevel(Condition, ref="Control"))
-
-# vacc <- vaccAll %>% 
-#   mutate(PreTest = scale(PreTestVaccinationAttitude)) %>%
-#   filter(Returned==1, Excluded==0) %>% 
-#   group_by(Participant) %>% 
-#   rename( 
-#        Healthy=Healthy_VaxscalePosttest,
-#        Diseases=Diseases_VaxScalePosttest_Reversed,
-#        Doctors=Doctors_VaxScalePostTest,
-#        SideEffects=Sideeffects_VaxScalePostTest_Reversed,
-#        PlanTo=Planto_VaxScalePostTest
-#        ) %>% 
-#   gather(Item, 
-#          Agree, 
-#          Healthy,
-#          Diseases,
-#          Doctors,
-#          SideEffects,
-#          PlanTo
-#          ) %>% 
-  # rename(
-  #      Healthy=Healthy_VaxscalePretest,
-  #      Diseases=Diseases_VaxScalePretest_Reversed,
-  #      Doctors=Doctors_VaxScalePreTest,
-  #      SideEffects=Sideeffects_VaccScalePreTest_Reversed,
-  #      PlanTo=Planto_VaxScalePreTest
-  #      )# %>%
-  # gather(Item, 
-  #      PreAgree, 
-  #      Healthy,
-  #      Diseases,
-  #      Doctors,
-  #      SideEffects,
-  #      PlanTo
-  #      ) %>% 
-  # mutate(Condition = relevel(Condition, ref="Control"))
+  mutate(pretest = PreTestVaccinationAttitude, posttest = PostTest.Vaccination.Attitude) %>%
+  filter(Returned == 1, Excluded == 0) %>%
+  mutate(Condition = relevel(Condition, ref="Control")) %>%
+  rename(condition = Condition)
 
 ```
 
+# Original Analysis (change scores)
+
+```{r}
+fit.change <- lm(change ~ condition, data = vaccW %>% mutate(change = posttest - pretest))
+summary(fit.change)
+```
 
 ## OLS analysis
 
 ```{r}
-fit.ols <- lm(PostTest ~ scale(PreTest) * Condition, data=vaccW)
+fit.ols <- lm(scale(posttest) ~ scale(pretest) * condition, data = vaccW)
+
+# fit.ols <- lm(scale(posttest) ~ scale(pretest) + condition, contrasts = list(condition = contr.sum), data = vaccW)
+
 summary(fit.ols)
 ```
 
@@ -86,41 +60,34 @@ Now we can run a beta regression using the `betareg` package. This uses maximum-
 library(betareg)
 set.seed(123)
 
-rescaleBeta <- function(x, lower, upper) {
+rescale_beta <- function(x, lower, upper) {
   # rescales onto the open interval (0,1)
   # rescales over theoretical bounds of measurement, specified by "upper" and "lower"
   # based on Smithson & Verkuilen (2006), though this is not as principled as you might think
   # see http://dx.doi.org/10.1037/1082-989X.11.1.54.supp
-  
+
   N <- length(x)
-  res <- (x-lower)/(upper - lower)
-  res <- (res*(N-1) + .5)/N
+  res <- (x - lower) / (upper - lower)
+  res <- (res * (N - 1) + .5) / N
 
   return(as.vector(res))
 }
 
-rescaleBeta2 <- function(x, lower, upper) {
-  # rescales onto the interval ~(.0001, ~.999)
-  # kind of hacky
-  
-  N <- length(x)
-  err <- .001
-  res <- (x-lower+err)/(upper - lower) * (1-err)
-  # res <- (res*(N-1) + .5)/N
+fit.beta <- betareg(
+  posttest ~ scale(pretest) + condition,
+  data = vaccW %>% mutate(posttest = rescale_beta(posttest, 1, 6))
+)
 
-  return(as.vector(res))
-}
-
-fit.beta <- betareg(PostTest ~ PreTest + Condition,
-                    data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)))
 summary(fit.beta)
-
 ```
 
 Comparing models ...
 
 ```{r}
-fit.olsScaled <- lm(PostTest ~ scale(PreTest) + Condition, data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)))
+fit.olsScaled <- lm(
+  posttest ~ scale(pretest) * condition,
+  data = vaccW %>% mutate(posttest = rescale_beta(posttest, 1, 6))
+)
 
 AIC(fit.olsScaled)
 AIC(fit.beta)
@@ -132,18 +99,18 @@ The beta regression model is **MUCH** preferred by AIC. Its results are also mor
 
 ```{r}
 
-vaccW %>% 
-  select(Condition, PreTest, PostTest) %>%
-  mutate(PostTest=rescaleBeta(PostTest,1,6)) %>%
+vaccW %>%
+  select(condition, pretest, posttest) %>%
+  mutate(posttest = rescale_beta(posttest, 1, 6)) %>%
   bind_cols(predict(fit.beta) %>% as_tibble()) %>%
-  rename(predictionBeta=value) %>%
+  rename(predictionBeta = value) %>%
   bind_cols(predict(fit.olsScaled) %>% as_tibble()) %>%
-  rename(predictionOLS=value) %>%
-
-ggplot(aes(x = PreTest, y = PostTest, color=Condition)) +
-  geom_jitter(height=.1, width=.05, alpha=.8, shape=1) +
-  geom_line(aes(y = predictionBeta, linetype="Beta")) +
-  geom_line(aes(y = predictionOLS, linetype="OLS")) +
+  rename(predictionOLS = value) %>%
+  
+  ggplot(aes(x = pretest, y = posttest, color = condition)) +
+  geom_jitter(height = .1, width = .05, alpha = .8, shape = 1) +
+  geom_line(aes(y = predictionBeta, linetype = "Beta")) +
+  geom_line(aes(y = predictionOLS, linetype = "OLS")) +
   # geom_line(aes(y = predict(fit.ols, vaccW),
   #               colour = "OLS", linetype = "OLS")) +
   # scale_colour_manual("", values = c("red", "blue")) +
@@ -157,59 +124,146 @@ Now for fun, we can do this in BRMS for both models. Short answer is everything 
 
 ```{r}
 library(brms)
-fit.bGaussian <- brm(
-  PostTest ~ PreTest + Condition,
-  data=vaccW,
-  family=gaussian(), # student(), #cumulative(), #bernoulli(), etc
+fit_brm_gauss <- brm(
+  posttest ~ pretest + condition,
+  data = vaccW,
+  family = gaussian(), # student(), #cumulative(), #bernoulli(), etc
   control = list(adapt_delta = .80),
   cores = parallel::detectCores(),
-  iter = 2000)
+  iter = 2000
+)
 
-summary(fit.bGaussian)
+summary(fit_brm_gauss)
 ```
 
 
 ```{r}
-fit.bBeta <- brm(
-  PostTest ~ PreTest + Condition,
-  data=vaccW %>% mutate(PostTest=rescaleBeta(PostTest,1,6)),
-  family=Beta(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .80),
+fit_brm_beta <- brm(
+  posttest ~ pretest + condition,
+  data = vaccW %>% mutate(posttest = rescale_beta(posttest, 1, 6)),
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
-  iter = 2000)
+  iter = 2000
+)
 
-summary(fit.bBeta)
+summary(fit_brm_beta)
 ```
 
 And we can compare the models using loo (analogous to AIC). Again, beta does far better.
 
 ```{r}
-loo(fit.bBeta)
-loo(fit.bGaussian)
+loo(fit_brm_gauss)
+loo(fit_brm_beta)
 ```
 
 And finally we can create marginal effects plots from both models. Ignoring the scale differences, they look pretty similar.
 
 ```{r}
-me1 <- marginal_effects(fit.bBeta, effects="Condition",probs=c(.25,.75))
-plt.me1 <- plot(me1, 
-                effects="Condition",
-                plot=FALSE,
-                rug=TRUE,
-                theme=ggplot2::theme_get()
-                )[[1]] + labs(title="Beta") + theme_bw()
+me1 <- marginal_effects(fit_brm_beta, effects = "Condition", probs = c(.25, .75))
+plt.me1 <- plot(me1,
+  effects = "Condition",
+  plot = FALSE,
+  rug = TRUE,
+  theme = ggplot2::theme_get()
+)[[1]] + labs(title = "Beta") + theme_bw()
 
-me2 <- marginal_effects(fit.bGaussian, effects="Condition",probs=c(.25,.75))
-plt.me2 <- plot(me2, 
-                effects="Condition",
-                plot=FALSE,
-                rug=TRUE,
-                theme=ggplot2::theme_get()
-                )[[1]] + labs(title="OLS") + theme_bw()
+me2 <- marginal_effects(fit_brm_gauss, effects = "Condition", probs = c(.25, .75))
+plt.me2 <- plot(me2,
+  effects = "Condition",
+  plot = FALSE,
+  rug = TRUE,
+  theme = ggplot2::theme_get()
+)[[1]] + labs(title = "Gaussian") + theme_bw()
 
 library(gridExtra)
-grid.arrange(plt.me1, plt.me2, ncol=2)
+grid.arrange(plt.me1, plt.me2, ncol = 2)
+```
 
+
+# Predicting "response"
+
+beta regression
+
+```{r}
+library(brms)
+# untested: 3/19/18, 8:10 PM
+fit_brm_beta_resp <- brm(
+  response ~ phase * condition + (1|Participant),
+  data = vaccW %>%
+    mutate(
+      posttest = rescale_beta(posttest, 1, 6),
+      pretest = rescale_beta(pretest, 1, 6)
+    ) %>%
+    gather(phase, response, pretest, posttest),
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+summary(fit_brm_beta_resp)
+```
+
+```{r}
+vacc <- vaccW %>%
+  rename(
+    Healthy_post = Healthy_VaxscalePosttest,
+    Diseases_post = Diseases_VaxScalePosttest_Reversed,
+    Doctors_post = Doctors_VaxScalePostTest,
+    SideEffects_post = Sideeffects_VaxScalePostTest_Reversed,
+    PlanTo_post = Planto_VaxScalePostTest,
+    Healthy_pre = Healthy_VaxscalePretest,
+    Diseases_pre = Diseases_VaxScalePretest_Reversed,
+    Doctors_pre = Doctors_VaxScalePreTest,
+    SideEffects_pre = Sideeffects_VaccScalePreTest_Reversed,
+    PlanTo_pre = Planto_VaxScalePreTest
+  ) %>%
+  # select(condition,ends_with("_pre"),ends_with("_post")) %>%
+  gather(
+    item,
+    agree,
+    ends_with("_pre"), 
+    ends_with("_post")
+  ) %>%
+  mutate(phase = ifelse(grepl("_pre", item), "pretest", "posttest")) %>%
+  mutate(item = sub("_pre", "", item)) %>%
+  mutate(item = sub("_post", "", item))
+  
+```
+
+predicing "response" from phase and condition, ordinal HLM
+
+```{r}
+# untested: 3/19/18, 8:10 PM
+fit_brm_cum_resp <- brm(
+  agree ~ phase * condition + (1|Participant) + (1|item),
+  data = vacc,
+  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+summary(fit_brm_cum_resp)
+```
+
+predicting posttest from pretest, ordinal HLM
+
+```{r}
+# untested: 3/19/18, 8:10 PM
+fit_brm_cum_posttest <- brm(
+  posttest ~ pretest + condition + (1 | Participant) + (1 | item),
+  data = vacc %>%
+    filter(phase == "posttest") %>%
+    rename(posttest = agree),
+  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+summary(fit_brm_cum_resp)
 ```
 
 # SessionInfo
