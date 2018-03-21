@@ -148,7 +148,7 @@ summary(fit_brm_gauss)
 ```{r}
 fit_brm_beta <- brm(
   rescale_beta(posttest, 1, 6) ~ pretest + condition,
-  data = vaccW),
+  data = vaccW,
   family = Beta(), # student(), #cumulative(), #bernoulli(), etc
   control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
