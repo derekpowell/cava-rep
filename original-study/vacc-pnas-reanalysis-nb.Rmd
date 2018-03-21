@@ -6,8 +6,9 @@ output:
     code_folding: hide
 ---
 
-This is a notebook to re-analyze the data from the PNAS paper "Countering Antivaccination Attitudes" using more appropriate statistical methods, such as ordinal HLM and beta regression. These analyses are being conducted in anticipation of a follow-up replication study.
+This is a notebook to re-analyze the data from the _PNAS_ paper "Countering Antivaccination Attitudes" using more appropriate statistical methods, such as ordinal HLM and beta regression. These analyses are being conducted in anticipation of a follow-up replication study.
 
+These re-analyses are primarily concerned with identifying the best method for analyzing the data from the _PNAS_ study.
 
 ```{r, echo=FALSE, results='hide'}
 library(tidyverse)
@@ -35,17 +36,47 @@ vaccW <- vaccAll %>%
 
 # Original Analysis (change scores)
 
+First, we can approximately replicate the original analyses that were conducted. Original analyses looked at "change scores", computed as posttest score minus pretest score. The distribution of change scores is only moderately skewed, although it has heavy tails.
+
 ```{r}
-fit.change <- lm(change ~ condition, data = vaccW %>% mutate(change = posttest - pretest))
+vaccW <- vaccW %>% mutate(change = posttest - pretest)
+
+vaccW %>%
+  ggplot(aes(x=change)) + 
+  geom_histogram(binwidth=.25)
+```
+
+```{r}
+
+fit.change <- lm(change ~ condition, data = vaccW)
 summary(fit.change)
 ```
 
-## OLS analysis
+The change score analysis has a few issues:
+
+1. Fails to control for or reveal pretest differences between conditions
+2. Fails to respect boundaries of original scale (e.g., for Ps near ceiling, negative change scores are largely uninformative)
+3. Change scores influenced by both pre-test and posttest measurement error (likely contaminated by regression to the mean)
+4. Assumes normal distribution (change scores somewhat non-normal)
+
+Other approaches can avoid some or all of these issues. 
+
+# Predicting posttest scores
+
+## Normal regression
+
+Unlike with change scores, posttest scores are not even approximately normal.
 
 ```{r}
-# fit.ols <- lm(scale(posttest) ~ scale(pretest) + condition, data = vaccW)
+vaccW %>%
+  ggplot(aes(x=posttest)) + 
+  geom_histogram(binwidth=.25)
+```
 
-fit.ols <- lm(scale(posttest) ~ scale(pretest) * condition, contrasts = list(condition = contr.sum), data = vaccW)
+```{r}
+fit.ols <- lm(scale(posttest) ~ scale(pretest) * condition, 
+              contrasts = list(condition = contr.treatment), 
+              data = vaccW)
 
 summary(fit.ols)
 ```
@@ -102,6 +133,7 @@ AIC(fit.beta)
 
 The beta regression model is **MUCH** preferred by AIC. Its results are also more sensible, capturing the main effect of Disease Risk intervention without the spurious interaction induced by the scale bounds and/or regression to the mean. (Comparing models within the beta family, a non-interactive model is slightly preferred, which is what I showed above).
 
+We can plot the models ...
 
 ```{r}
 
@@ -124,9 +156,9 @@ vaccW %>%
   theme_bw()
 ```
 
-## with BRMS
+### with BRMS
 
-Now for fun, we can do this in BRMS for both models. Short answer is everything looks exactly the same.
+Now we'll switch to performing these analyses in BRMS, which will make subsequent analyses easier. The Bayesan appraoch replicates the frequentist results closely.
 
 ```{r}
 library(brms)
@@ -161,7 +193,14 @@ fit_brm_beta <- brm(
 summary(fit_brm_beta)
 ```
 
-We can look at posterior predictive checks to assess the appropriateness of the models.
+And we can compare the models using loo (analogous to AIC). Again, beta does far better.
+
+```{r}
+loo(fit_brm_gauss)
+loo(fit_brm_beta)
+```
+
+Using BRMS allows us to look at posterior predictive checks to assess the appropriateness of the models.
 
 ```{r}
 pp_check(fit_brm_gauss)
@@ -171,14 +210,7 @@ pp_check(fit_brm_gauss)
 pp_check(fit_brm_beta)
 ```
 
-And we can compare the models using loo (analogous to AIC). Again, beta does far better.
-
-```{r}
-loo(fit_brm_gauss)
-loo(fit_brm_beta)
-```
-
-Unfortunately, neither look perfect. The Gaussian model has the obvious problem of predicting out-of-range values. And they both fail to capture the "double-hump" of the distribution--it looks like there may be an over-representation of the second-strongest statement, probably a responding bias or tendency to temper agreement and avoid extremes?
+Unfortunately, neither look perfect. The Gaussian model has the obvious problem of predicting out-of-range values (note the movement in x-axis scale). And they both fail to capture the "double-hump" of the distribution--it looks like there may be an over-representation of the second-strongest statement, probably a responding bias or tendency to temper agreement and avoid extremes?
 
 In any case, we can create marginal effects plots from both models. I've rescaled posttest for both to permit the LOO comparison. They look pretty similar, but slightly smaller effects under beta, and of course it fit better.
 
@@ -203,7 +235,7 @@ library(gridExtra)
 grid.arrange(plt.me1, plt.me2, ncol = 2)
 ```
 
-## Predicting posttest from pretest, ordinal HLM
+## Ordinal HLM
 
 ```{r}
 vacc <- vaccW %>%
@@ -232,7 +264,7 @@ vacc <- vaccW %>%
   
 ```
 
-So finally we can try a model that respects the ordinal nature of the original data. This uses the [proportional-odds cumulative logit model](https://onlinecourses.science.psu.edu/stat504/node/176). 
+So finally we can try a model that respects the ordinal nature of the original data. We'll use a hierarchica lversion of the [proportional-odds cumulative logit model](https://onlinecourses.science.psu.edu/stat504/node/176). 
 
 ```{r echo=TRUE, results='hide'}
 # untested: 3/19/18, 8:10 PM
@@ -252,19 +284,21 @@ fit_brm_cum_posttest <- brm(
 summary(fit_brm_cum_posttest)
 ```
 
-We can't compare AIC because the underlying data are different here (different represenation), but that posterior predictive check looks essentially perfect.
+We can't compare AIC to the previous models because the underlying data are different here (different represenation), but the posterior predictive check looks essentially perfect.
 
 ```{r}
 pp_check(fit_brm_cum_posttest)
 ```
 
-# Predicting "response"
+# Predicting "response" at pretest and posttest
 
 Another way of representing/modeling these data are to predict responses at both pre and posttest, with a model like the following:
 
 ```
 response ~ timepoint * condition + (1|participant)
 ```
+
+## Normal regression
 
 First, we can do so (incorrectly) assuming gaussian errors.
 
@@ -289,7 +323,7 @@ fit_brm_gauss_resp <- brm(
 summary(fit_brm_gauss_resp)
 ```
 
-Beta regression
+## Beta regression
 
 ```{r}
 library(brms)
@@ -327,8 +361,7 @@ loo(fit_brm_beta_resp)
 
 Again, beta is preferred by LOO.
 
-
-### predicing "response" from phase and condition, ordinal HLM
+## Ordinal HLM
 
 ```{r echo=TRUE, results='hide'}
 # untested: 3/19/18, 8:10 PM
@@ -346,13 +379,15 @@ fit_brm_cum_resp <- brm(
 summary(fit_brm_cum_resp)
 ```
 
-And as in the previous set of results, posterior predictive checks look best for the ordinal regression model.
+And as in the previous set of results, posterior predictive checks look best for the ordinal regression model. Subjectively however, they look poorer than they did in the model predicting posttest.
 
 ```{r}
 pp_check(fit_brm_cum_resp)
 ```
 
+# Conclusions
 
+Provisionally, I prefer to use the `posttest ~ pretest + condition` model form using the ordinal HLM across raw likert ratings. There are a few benefits to the model formula and to that data/distributional choice: (1) I think it's the easiest to interpret, (2) adding an interaction can model pretest attitudes moderating condition effects, (3) the model offered the best fit by posterior predictive checks, (4) models predicting posttest result in better model fit than models predicting "response", which should support "good behavior" generally from the model, and (5) it seems to be the most commmonly preferred approach among other researchers.
 
 # SessionInfo
 
