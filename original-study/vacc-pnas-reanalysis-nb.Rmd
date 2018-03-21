@@ -8,20 +8,17 @@ output:
 
 This is a notebook to re-analyze the data from the PNAS paper "Countering Antivaccination Attitudes" using more appropriate statistical methods, such as ordinal HLM and beta regression. These analyses are being conducted in anticipation of a follow-up replication study.
 
-# Beta Regression
 
-Beta regression is a more appropriate approach to analyzing bounded, skewed, and heteroscedastic data. Which is exactly what our vaccine attitude scale measures are. 
-
-For more info, see [this paper](https://www.ncbi.nlm.nih.gov/pubmed/16594767), cited below.
-
-> Smithson M, Verkuilen J: A better lemon squeezer? Maximum-likelihood regression with beta-distributed dependent variables. Psychol Methods. 2006, 11 (1): 54-71.)
-
-Also good to read the [betareg vignette](https://cran.r-project.org/web/packages/betareg/vignettes/betareg.pdf) (or run `vignette("betareg")`).
-
-```{r, echo=FALSE}
+```{r, echo=FALSE, results='hide'}
 library(tidyverse)
 library(brms)
+if (!require(betareg)) {
+  install.packages("betareg")
+}
+library(betareg)
+```
 
+```{r}
 vaccAll <- read.csv("vacc-hphh-pubdata.csv") %>% 
   as_tibble() %>% 
   mutate(Participant = seq(1:n())) %>%
@@ -35,6 +32,7 @@ vaccW <- vaccAll %>%
 
 ```
 
+
 # Original Analysis (change scores)
 
 ```{r}
@@ -45,19 +43,27 @@ summary(fit.change)
 ## OLS analysis
 
 ```{r}
-fit.ols <- lm(scale(posttest) ~ scale(pretest) * condition, data = vaccW)
+# fit.ols <- lm(scale(posttest) ~ scale(pretest) + condition, data = vaccW)
 
-# fit.ols <- lm(scale(posttest) ~ scale(pretest) + condition, contrasts = list(condition = contr.sum), data = vaccW)
+fit.ols <- lm(scale(posttest) ~ scale(pretest) * condition, contrasts = list(condition = contr.sum), data = vaccW)
 
 summary(fit.ols)
 ```
 
 ## Beta Regression
 
+Beta regression is a more appropriate approach to analyzing bounded, skewed, and heteroscedastic data. Which is exactly what our vaccine attitude scale measures are. 
+
+For more info, see [this paper](https://www.ncbi.nlm.nih.gov/pubmed/16594767), cited below.
+
+> Smithson M, Verkuilen J: A better lemon squeezer? Maximum-likelihood regression with beta-distributed dependent variables. Psychol Methods. 2006, 11 (1): 54-71.)
+
+Also good to read the [betareg vignette](https://cran.r-project.org/web/packages/betareg/vignettes/betareg.pdf) (or run `vignette("betareg")`).
+
 Now we can run a beta regression using the `betareg` package. This uses maximum-likelihood estimation and provides frequentist p-values, etc. Before conducting beta regression, the response variable must be rescaled on to the bounded (exclusive) interval $(0, 1)$.
 
 ```{r}
-library(betareg)
+
 set.seed(123)
 
 rescale_beta <- function(x, lower, upper) {
@@ -125,7 +131,7 @@ Now for fun, we can do this in BRMS for both models. Short answer is everything 
 ```{r}
 library(brms)
 fit_brm_gauss <- brm(
-  posttest ~ pretest + condition,
+  rescale_beta(posttest, 1, 6) ~ pretest + condition,
   data = vaccW,
   family = gaussian(), # student(), #cumulative(), #bernoulli(), etc
   control = list(adapt_delta = .80),
@@ -133,21 +139,36 @@ fit_brm_gauss <- brm(
   iter = 2000
 )
 
+```
+
+```{r}
 summary(fit_brm_gauss)
 ```
 
-
 ```{r}
 fit_brm_beta <- brm(
-  posttest ~ pretest + condition,
-  data = vaccW %>% mutate(posttest = rescale_beta(posttest, 1, 6)),
+  rescale_beta(posttest, 1, 6) ~ pretest + condition,
+  data = vaccW),
   family = Beta(), # student(), #cumulative(), #bernoulli(), etc
   control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
   iter = 2000
 )
 
+```
+
+```{r}
 summary(fit_brm_beta)
+```
+
+We can look at posterior predictive checks to assess the appropriateness of the models.
+
+```{r}
+pp_check(fit_brm_gauss)
+```
+
+```{r}
+pp_check(fit_brm_beta)
 ```
 
 And we can compare the models using loo (analogous to AIC). Again, beta does far better.
@@ -157,20 +178,22 @@ loo(fit_brm_gauss)
 loo(fit_brm_beta)
 ```
 
-And finally we can create marginal effects plots from both models. Ignoring the scale differences, they look pretty similar.
+Unfortunately, neither look perfect. The Gaussian model has the obvious problem of predicting out-of-range values. And they both fail to capture the "double-hump" of the distribution--it looks like there may be an over-representation of the second-strongest statement, probably a responding bias or tendency to temper agreement and avoid extremes?
+
+In any case, we can create marginal effects plots from both models. I've rescaled posttest for both to permit the LOO comparison. They look pretty similar, but slightly smaller effects under beta, and of course it fit better.
 
 ```{r}
-me1 <- marginal_effects(fit_brm_beta, effects = "Condition", probs = c(.25, .75))
+me1 <- marginal_effects(fit_brm_beta, effects = "condition", probs = c(.25, .75))
 plt.me1 <- plot(me1,
-  effects = "Condition",
+  effects = "condition",
   plot = FALSE,
   rug = TRUE,
   theme = ggplot2::theme_get()
 )[[1]] + labs(title = "Beta") + theme_bw()
 
-me2 <- marginal_effects(fit_brm_gauss, effects = "Condition", probs = c(.25, .75))
+me2 <- marginal_effects(fit_brm_gauss, effects = "condition", probs = c(.25, .75))
 plt.me2 <- plot(me2,
-  effects = "Condition",
+  effects = "condition",
   plot = FALSE,
   rug = TRUE,
   theme = ggplot2::theme_get()
@@ -180,30 +203,7 @@ library(gridExtra)
 grid.arrange(plt.me1, plt.me2, ncol = 2)
 ```
 
-
-# Predicting "response"
-
-beta regression
-
-```{r}
-library(brms)
-# untested: 3/19/18, 8:10 PM
-fit_brm_beta_resp <- brm(
-  response ~ phase * condition + (1|Participant),
-  data = vaccW %>%
-    mutate(
-      posttest = rescale_beta(posttest, 1, 6),
-      pretest = rescale_beta(pretest, 1, 6)
-    ) %>%
-    gather(phase, response, pretest, posttest),
-  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
-
-summary(fit_brm_beta_resp)
-```
+## Predicting posttest from pretest, ordinal HLM
 
 ```{r}
 vacc <- vaccW %>%
@@ -232,43 +232,130 @@ vacc <- vaccW %>%
   
 ```
 
-predicing "response" from phase and condition, ordinal HLM
+So finally we can try a model that respects the ordinal nature of the original data. This uses the [proportional-odds cumulative logit model](https://onlinecourses.science.psu.edu/stat504/node/176). 
+
+```{r echo=TRUE, results='hide'}
+# untested: 3/19/18, 8:10 PM
+fit_brm_cum_posttest <- brm(
+  agree ~ pretest + condition + (1 | Participant) + (1 | item),
+  data = vacc %>%
+    filter(phase == "posttest"),
+  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+```
 
 ```{r}
+summary(fit_brm_cum_posttest)
+```
+
+We can't compare AIC because the underlying data are different here (different represenation), but that posterior predictive check looks essentially perfect.
+
+```{r}
+pp_check(fit_brm_cum_posttest)
+```
+
+# Predicting "response"
+
+Another way of representing/modeling these data are to predict responses at both pre and posttest, with a model like the following:
+
+```
+response ~ timepoint * condition + (1|participant)
+```
+
+First, we can do so (incorrectly) assuming gaussian errors.
+
+```{r}
+fit_brm_gauss_resp <- brm(
+  response ~ phase * condition + (1|Participant),
+  data = vaccW %>%
+    mutate(
+      posttest = rescale_beta(posttest, 1, 6),
+      pretest = rescale_beta(pretest, 1, 6)
+    ) %>%
+    gather(phase, response, pretest, posttest) %>%
+    mutate(phase= ifelse(phase=="pretest",0,1)),
+  family = gaussian(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_gauss_resp)
+```
+
+Beta regression
+
+```{r}
+library(brms)
+
+fit_brm_beta_resp <- brm(
+  response ~ phase * condition + (1|Participant),
+  data = vaccW %>%
+    mutate(
+      posttest = rescale_beta(posttest, 1, 6),
+      pretest = rescale_beta(pretest, 1, 6)
+    ) %>%
+    gather(phase, response, pretest, posttest) %>%
+    mutate(phase= ifelse(phase=="pretest",0,1)),
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+```
+
+```{r}
+summary(fit_brm_beta_resp)
+```
+
+```{r}
+pp_check(fit_brm_gauss_resp)
+pp_check(fit_brm_beta_resp)
+```
+
+```{r}
+loo(fit_brm_gauss_resp)
+loo(fit_brm_beta_resp)
+```
+
+Again, beta is preferred by LOO.
+
+
+### predicing "response" from phase and condition, ordinal HLM
+
+```{r echo=TRUE, results='hide'}
 # untested: 3/19/18, 8:10 PM
 fit_brm_cum_resp <- brm(
   agree ~ phase * condition + (1|Participant) + (1|item),
-  data = vacc,
+  data = vacc %>% mutate(phase = ifelse(phase=="pretest",0,1)),
   family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
   control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
   iter = 2000
 )
-
-summary(fit_brm_cum_resp)
 ```
-
-predicting posttest from pretest, ordinal HLM
 
 ```{r}
-# untested: 3/19/18, 8:10 PM
-fit_brm_cum_posttest <- brm(
-  posttest ~ pretest + condition + (1 | Participant) + (1 | item),
-  data = vacc %>%
-    filter(phase == "posttest") %>%
-    rename(posttest = agree),
-  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
-
 summary(fit_brm_cum_resp)
 ```
+
+And as in the previous set of results, posterior predictive checks look best for the ordinal regression model.
+
+```{r}
+pp_check(fit_brm_cum_resp)
+```
+
+
 
 # SessionInfo
 
 ```{r}
 sessionInfo()
 ```
-
