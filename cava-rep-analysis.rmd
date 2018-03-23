@@ -189,3 +189,13 @@ fit.beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
 summary(fit.beta)
 ```
 
+# Replication notes
+
+Can be replicated using Docker image: `derekpowell/rstudio-dmp:20180321`
+
+### `sessionInfo()`
+
+```{r}
+sessionInfo()
+```
+
