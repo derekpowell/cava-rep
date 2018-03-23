@@ -1,0 +1,191 @@
+---
+title: "Countering AntiVaccination Attitudes Replication"
+author: "Derek Powell & Kara Weisman"
+output: 
+  html_notebook: 
+    code_folding: hide
+---
+
+__NOTE: These are preliminary analyses as of 3/23/18, 4:29 PM__
+
+This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
+
+This replication roject was preregistered: https://osf.io/j5n4e/
+
+- Part 1 of the study was conducted on March 21, 2018
+- Part 2 of the study was conducted on March 22, 2018 (with a few Ps collected March 23, 2018)
+
+```{r}
+# load packages
+library(tidyverse)
+if (!require(betareg)) {
+  install.packages("betareg")
+}
+library(betareg)
+
+# Define some functions ...
+read_qualtrics_csv <- function(fname) {
+  df <- read.csv(fname, skip = 3, header = F)
+  headers <- as.matrix(read.csv(fname, skip = 0, header = F, nrows = 1, as.is = T))
+  colnames(df) <- headers
+  df <- df[which(df[, "DistributionChannel", ] == "anonymous"), ] # remove survey previews
+  total_n <- nrow(df)
+
+  # remove unused qualtrics variables
+  remove_cols <- c(
+    "RecipientLastdata",
+    "RecipientFirstdata",
+    "RecipientEmail",
+    "Finished",
+    "ResponseId",
+    "ExternalReference",
+    "DistributionChannel",
+    "UserLanguage",
+    "Status"
+  )
+
+  df <- df[, -which(colnames(df) %in% remove_cols)]
+
+  return(df)
+}
+
+rescale_beta <- function(x, lower, upper) {
+  # rescales onto the open interval (0,1)
+  # rescales over theoretical bounds of measurement, specified by "upper" and "lower"
+  # based on Smithson & Verkuilen (2006), though this is not as principled as you might think
+  # see http://dx.doi.org/10.1037/1082-989X.11.1.54.supp
+
+  N <- length(x)
+  res <- (x - lower) / (upper - lower)
+  res <- (res * (N - 1) + .5) / N
+
+  return(as.vector(res))
+}
+```
+
+```{r}
+# working from raw qualtrics with workerIds anonymized
+
+# Data preprocessing ...
+d_pre <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day1-2018-03-23.csv") %>%
+  select(workerId, age:Vax1_Vax1_36, eligible, study_time, payment)
+
+d_post <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day2-2018-03-23.csv") %>%
+  select(workerId, condition, vax2_Vax1_1:vax2_Vax1_36, parent:SC1)
+
+d_merge <- merge(d_pre,d_post, by="workerId") %>%
+  as_tibble() %>%
+  filter(SC1==4) %>%
+  filter(Attention==1)
+
+# rename variables and do reverse coding
+
+d_untidy <- d_merge %>%
+  select(-Vax1_Vax1_check,-vax2_Vax1_check) %>%
+  rename(
+    vax_pre_risks = Vax1_Vax1_1,
+    vax_pre_herd = Vax1_Vax1_2,
+    vax_pre_plan = Vax1_Vax1_3,
+    vax_pre_uncommon = Vax1_Vax1_4,
+    vax_pre_doctors = Vax1_Vax1_5,
+    vax_pre_autism = Vax1_Vax1_6,
+    vaxIntent_pre_Iwould = Vax1_Vax1_33,
+    vaxIntent_pre_spreadOut = Vax1_Vax1_34,
+    vaxIntent_pre_confident = Vax1_Vax1_35,
+    vaxIntent_pre_wouldNever = Vax1_Vax1_36,
+    vax_post_risks = vax2_Vax1_1,
+    vax_post_herd = vax2_Vax1_2,
+    vax_post_plan = vax2_Vax1_3,
+    vax_post_uncommon = vax2_Vax1_4,
+    vax_post_doctors = vax2_Vax1_5,
+    vax_post_autism = vax2_Vax1_6,
+    vaxIntent_post_Iwould = vax2_Vax1_33,
+    vaxIntent_post_spreadOut = vax2_Vax1_34,
+    vaxIntent_post_confident = vax2_Vax1_35,
+    vaxIntent_post_wouldNever = vax2_Vax1_36
+  ) %>%
+  mutate(
+    vax_pre_risks = 7 - vax_pre_risks,
+    vax_pre_uncommon = 7 - vax_pre_uncommon,
+    vaxIntent_pre_risks = 7 - vax_pre_risks,
+    vaxIntent_pre_spreadOut = 7 - vaxIntent_pre_spreadOut,
+    vax_post_risks = 7 - vax_post_risks,
+    vax_post_uncommon = 7 - vax_post_uncommon,
+    vaxIntent_post_risks = 7 - vax_post_risks,
+    vaxIntent_post_spreadOut = 7 - vaxIntent_post_spreadOut
+  )
+```
+
+```{r}
+# more munging to tidy data ...
+d <- d_untidy %>%
+  gather(item, rating, contains("vax")) %>%
+  mutate(
+    rating = as.integer(rating),
+    phase = ifelse(grepl("_pre_",item),"pretest","posttest"),
+    Scale = ifelse(grepl("vaxIntent_",item), "vaxIntent", "vaxAttitude")
+    ) %>%
+  mutate(Scale = ifelse(grepl("autism",item), "autism", Scale)) %>%
+  mutate(item=gsub("vax_pre_","", item)) %>%
+  mutate(item=gsub("vax_post_","", item)) %>%
+  mutate(item=gsub("vaxIntent_pre_","", item)) %>%
+  mutate(item=gsub("vaxIntent_post_","", item))
+
+```
+
+## Plotting Change Scores
+
+Plotting to replicate figure 1 from _PNAS_ paper.
+
+```{r}
+# standard error function
+stderr <- function(x) {
+          sqrt(var(x[!is.na(x)]) / length(x[!is.na(x)]))
+}
+
+d %>%
+  filter(Scale=="vaxAttitude") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  summarize(change_score = posttest-pretest) %>%
+  group_by(condition) %>%
+  summarize(mean_change = mean(change_score),
+            ul = mean(change_score) + stderr(change_score),
+            ll = mean(change_score) - stderr(change_score)) %>%
+  ggplot(aes(x=condition, fill=condition, y = mean_change, ymin=ll, ymax=ul)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(width=.25) +
+  theme_minimal() +
+  labs(title="Change Score Analysis")
+
+```
+
+## Model: Posttest scores by condition, controlling for pretest
+
+### Linear regression model
+
+```{r}
+d_sum <- d %>%
+  filter(Scale=="vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  ungroup() %>%
+  mutate(condition= relevel(condition, ref="bird"))
+
+fit.lm <- lm(posttest ~ scale(pretest) * condition,
+           data=d_sum)
+
+summary(fit.lm)
+```
+
+### Beta Regression
+
+```{r}
+fit.beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
+           data=d_sum)
+
+summary(fit.beta)
+```
+
