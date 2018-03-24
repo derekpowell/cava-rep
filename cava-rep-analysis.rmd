@@ -18,6 +18,7 @@ This replication roject was preregistered: https://osf.io/j5n4e/
 ```{r}
 # load packages
 library(tidyverse)
+library(brms)
 if (!require(betareg)) {
   install.packages("betareg")
 }
@@ -123,7 +124,8 @@ d <- d_untidy %>%
   mutate(
     rating = as.integer(rating),
     phase = ifelse(grepl("_pre_",item),"pretest","posttest"),
-    Scale = ifelse(grepl("vaxIntent_",item), "vaxIntent", "vaxAttitude")
+    Scale = ifelse(grepl("vaxIntent_",item), "vaxIntent", "vaxAttitude"),
+    condition = relevel(condition, ref="bird")
     ) %>%
   mutate(Scale = ifelse(grepl("autism",item), "autism", Scale)) %>%
   mutate(item=gsub("vax_pre_","", item)) %>%
@@ -167,28 +169,94 @@ d %>%
 
 ```{r}
 d_sum <- d %>%
-  filter(Scale=="vaxIntent") %>%
+  filter(Scale=="vaxAttitude") %>%
   group_by(workerId, condition, phase) %>%
   summarize(mean_rating = mean(rating)) %>%
   spread(phase, mean_rating) %>%
   ungroup() %>%
   mutate(condition= relevel(condition, ref="bird"))
 
-fit.lm <- lm(posttest ~ scale(pretest) * condition,
+fit_lm <- lm(posttest ~ scale(pretest) * condition,
            data=d_sum)
 
-summary(fit.lm)
+summary(fit_lm)
 ```
 
 ### Beta Regression
 
 ```{r}
-fit.beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
+fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
            data=d_sum)
 
-summary(fit.beta)
+summary(fit_beta)
 ```
 
+and in BRMS ...
+
+```{r}
+fit_brm_beta <- brm(
+  rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+  data = d_sum,
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+
+```{r}
+summary(fit_brm_beta)
+
+me2 <- marginal_effects(fit_brm_beta, effects = "condition", probs = c(.25, .75))
+plt.me2 <- plot(me2,
+  effects = "condition",
+  plot = FALSE,
+  rug = TRUE,
+  theme = ggplot2::theme_get()
+)[[1]] + labs(title = "Beta") + theme_bw()
+
+plt.me2
+```
+
+## Hierarchical ordinal regression
+
+```{r}
+fit_brm_cum_posttest <- brm(
+  posttest ~ pretest + condition + (1 | workerId) + (1 | item),
+  data = d %>% filter(Scale=="vaxAttitude") %>% spread(phase, rating),
+  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_cum_posttest)
+```
+
+# "Vaccine intent" scale results
+
+```{r}
+d %>%
+  filter(Scale=="vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  summarize(change_score = posttest-pretest) %>%
+  group_by(condition) %>%
+  summarize(mean_change = mean(change_score),
+            ul = mean(change_score) + stderr(change_score),
+            ll = mean(change_score) - stderr(change_score)) %>%
+  ggplot(aes(x=condition, fill=condition, y = mean_change, ymin=ll, ymax=ul)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(width=.25) +
+  theme_minimal() +
+  labs(title="Change Score Analysis: Vaccine Intent")
+```
+
+ 
 # Replication notes
 
 Can be replicated using Docker image: `derekpowell/rstudio-dmp:20180321`
