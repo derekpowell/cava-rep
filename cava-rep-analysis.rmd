@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/23/18, 4:29 PM__
+__NOTE: These are preliminary analyses as of 3/24/18, 11:32 AM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -108,12 +108,14 @@ d_untidy <- d_merge %>%
   mutate(
     vax_pre_risks = 7 - vax_pre_risks,
     vax_pre_uncommon = 7 - vax_pre_uncommon,
+    vax_post_risks = 7 - vax_post_risks,
     vaxIntent_pre_risks = 7 - vax_pre_risks,
     vaxIntent_pre_spreadOut = 7 - vaxIntent_pre_spreadOut,
-    vax_post_risks = 7 - vax_post_risks,
+    vaxIntent_post_wouldNever = 7 - vaxIntent_post_wouldNever,
     vax_post_uncommon = 7 - vax_post_uncommon,
     vaxIntent_post_risks = 7 - vax_post_risks,
-    vaxIntent_post_spreadOut = 7 - vaxIntent_post_spreadOut
+    vaxIntent_post_spreadOut = 7 - vaxIntent_post_spreadOut,
+    vaxIntent_post_wouldNever = 7 - vaxIntent_post_wouldNever
   )
 ```
 
@@ -133,7 +135,34 @@ d <- d_untidy %>%
   mutate(item=gsub("vaxIntent_pre_","", item)) %>%
   mutate(item=gsub("vaxIntent_post_","", item))
 
+# and reducing to a "summary" dataset
+d_sum <- d %>%
+  filter(Scale=="vaxAttitude") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  mutate(change = posttest - pretest)
 ```
+
+## Comparing conditions at pretest
+
+```{r}
+d_sum %>%
+  ggplot(aes(x=pretest, fill=condition)) +
+  geom_density(alpha=.25) +
+  theme_minimal()
+
+# d_sum %>%
+#   ggplot(aes(x=condition, y = pretest)) +
+#   geom_violin()
+```
+
+```{r}
+fit_pre <- betareg(rescale_beta(pretest,1,6) ~ condition, data=d_sum)
+summary(fit_pre)
+```
+
+Participants in the autism correction and disease risk conditions had slightly (tho non-significantly) higher pretest scores than participants in the control condition. Presumably, this should have made it all the more difficult to improve attitudes in those conditions relative to control.
 
 ## Plotting Change Scores
 
@@ -163,19 +192,24 @@ d %>%
 
 ```
 
+Anaysis of change scores shows significant improvement in disease risk condition. This analysis replicates the original analyses and the primary pre-registered analysis. We directly replicate the original findings.
+
+```{r}
+fit_aov <- aov(change ~ condition, data = d_sum)
+summary(fit_aov)
+
+t.test(change ~ condition, data = d_sum %>% filter(condition!="autism"))
+t.test(change ~ condition, data = d_sum %>% filter(condition!="bird"))
+
+```
+
+However, ANOVA on change scores is not the optimal approach to analyzing these data. In the following we explore some other approaches that should let us more accurately assess the true magnitude of the intervention's effect.
+
 ## Model: Posttest scores by condition, controlling for pretest
 
 ### Linear regression model
 
 ```{r}
-d_sum <- d %>%
-  filter(Scale=="vaxAttitude") %>%
-  group_by(workerId, condition, phase) %>%
-  summarize(mean_rating = mean(rating)) %>%
-  spread(phase, mean_rating) %>%
-  ungroup() %>%
-  mutate(condition= relevel(condition, ref="bird"))
-
 fit_lm <- lm(posttest ~ scale(pretest) * condition,
            data=d_sum)
 
@@ -204,6 +238,7 @@ fit_brm_beta <- brm(
 )
 ```
 
+Plotting condition effects estimated from the model (50% credible intervals).
 
 ```{r}
 summary(fit_brm_beta)
@@ -214,12 +249,16 @@ plt.me2 <- plot(me2,
   plot = FALSE,
   rug = TRUE,
   theme = ggplot2::theme_get()
-)[[1]] + labs(title = "Beta") + theme_bw()
+)[[1]] + 
+  labs(title = "Beta Regression: Marginal Effects") + 
+  theme_minimal()
 
 plt.me2
 ```
 
 ## Hierarchical ordinal regression
+
+This is likely the __MOST__ appropriate analysis, accounting for the ordinal nature of the underlying response variable, as well as possible differences among scale items.
 
 ```{r}
 fit_brm_cum_posttest <- brm(
@@ -237,6 +276,8 @@ summary(fit_brm_cum_posttest)
 ```
 
 # "Vaccine intent" scale results
+
+Here's a plot of the change scores for the vaccine intent scale across conditions. There don't appear to be any differences. (and note change in y-axis scale compared to previous plots)
 
 ```{r}
 d %>%
@@ -256,10 +297,66 @@ d %>%
   labs(title="Change Score Analysis: Vaccine Intent")
 ```
 
- 
+## Linear regression
+
+Nothing much going on here.
+
+```{r}
+d_sum_intent <- d %>%
+  filter(Scale == "vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating)
+
+fit_lm_intent <- lm(posttest ~ scale(pretest) * condition, data = d_sum_intent)
+summary(fit_lm_intent)
+```
+
+## Beta regression
+
+Nor here.
+
+```{r}
+d_sum_intent <- d %>%
+  filter(Scale == "vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating)
+
+fit_beta_intent <- betareg(
+  rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+  data = d_sum_intent
+)
+
+summary(fit_beta_intent)
+```
+
+## Ordinal HLM
+
+Nor, finally, here.
+
+```{r}
+fit_brm_cum_posttest_intent <- brm(
+  posttest ~ pretest + condition + (1 | workerId) + (1 | item),
+  data = d %>% filter(Scale=="vaxIntent") %>% spread(phase, rating),
+  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_cum_posttest_intent)
+```
+
+# Summary
+
+This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. However, despite generally improving attitudes, the intervention did not increase participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale. Further analyses are needed to begin exploring the reasons for this.
+
 # Replication notes
 
-Can be replicated using Docker image: `derekpowell/rstudio-dmp:20180321`
+Analyses can be replicated using `derekpowell/rstudio-dmp:20180321` Docker image.
 
 ### `sessionInfo()`
 
