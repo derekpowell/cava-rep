@@ -19,10 +19,16 @@ This replication roject was preregistered: https://osf.io/j5n4e/
 # load packages
 library(tidyverse)
 library(brms)
+
 if (!require(betareg)) {
   install.packages("betareg")
 }
 library(betareg)
+
+if (!require(effsize)) {
+  install.packages("effsize")
+}
+library(effsize)
 
 # Define some functions ...
 read_qualtrics_csv <- function(fname) {
@@ -118,10 +124,8 @@ d_untidy <- d_merge %>%
   mutate( # add duplicates to cover both scales
     vaxIntent_pre_risks = vax_pre_risks,
     vaxIntent_post_risks = vax_post_risks
-  )
-```
+  ) 
 
-```{r}
 # more munging to tidy data ...
 d <- d_untidy %>%
   gather(item, rating, contains("vax")) %>%
@@ -129,8 +133,11 @@ d <- d_untidy %>%
     rating = as.integer(rating),
     phase = ifelse(grepl("_pre_",item),"pretest","posttest"),
     Scale = ifelse(grepl("vaxIntent_",item), "vaxIntent", "vaxAttitude"),
-    condition = relevel(condition, ref="bird")
+    condition = factor(condition, 
+                       levels=c("bird","autism","cdc_danger"),
+                       labels=c("Control","Autism Correction", "Disease Risk"))
     ) %>%
+  mutate(condition = relevel(condition, ref="Control")) %>%
   mutate(Scale = ifelse(grepl("autism",item), "autism", Scale)) %>%
   mutate(item=gsub("vax_pre_","", item)) %>%
   mutate(item=gsub("vax_post_","", item)) %>%
@@ -145,6 +152,9 @@ d_sum <- d %>%
   spread(phase, mean_rating) %>%
   mutate(change = posttest - pretest)
 ```
+
+
+# Preliminaries
 
 ## Check scale reliability and confirm proper reverse coding
 
@@ -164,17 +174,25 @@ d %>% filter(Scale=="vaxIntent", phase=="pretest") %>% spread(item, rating) %>% 
 d %>% filter(Scale=="vaxIntent", phase=="posttest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
 ```
 
-## Comparing conditions at pretest
+Scales have been properly coded and can be considered reliable. 
+
+## Testing for pretest differences
+
+Before considering change scores, we should confirm there are no meaningful pretest differences between conditions. The plot below suggests 
 
 ```{r}
-d_sum %>%
-  ggplot(aes(x=pretest, fill=condition)) +
-  geom_density(alpha=.25) +
-  theme_minimal()
-
 # d_sum %>%
-#   ggplot(aes(x=condition, y = pretest)) +
-#   geom_violin()
+#   ggplot(aes(x=pretest, fill=condition)) +
+#   geom_density(alpha=.25) +
+#   theme_minimal()
+
+d_sum %>%
+  ggplot(aes(x = condition, fill = condition, colour = condition, y = pretest)) +
+  geom_violin(width = .5, alpha = .25) +
+  stat_summary(fun.data = "mean_cl_boot", fun.args = (list(B = 10000, conf.int = .95)), color = "grey20", shape = 16) +
+  theme_minimal() +
+  labs(title = "Pretest Scores", y = "Pretest Scores", x = "Condition") +
+  annotate("text", label = "Error bars represent 95% bootstrap CI of the mean", x = 2, y = .5)
 ```
 
 ```{r}
@@ -183,6 +201,10 @@ summary(fit_pre)
 ```
 
 Participants in the autism correction and disease risk conditions had slightly (tho non-significantly) higher pretest scores than participants in the control condition. Presumably, this should have made it all the more difficult to improve attitudes in those conditions relative to control.
+
+
+
+# I. Direct Replication
 
 ## Plotting Change Scores
 
@@ -208,35 +230,61 @@ d %>%
   geom_bar(stat="identity") +
   geom_errorbar(width=.25) +
   theme_minimal() +
-  labs(title="Change Score Analysis")
+  labs(title="Change Score Analysis",
+       y = "Mean Change Score",
+       x = "Condition",
+       fill = "Condition")
 
 ```
 
-Anaysis of change scores shows significant improvement in disease risk condition. This analysis replicates the original analyses and the primary pre-registered analysis. We directly replicate the original findings.
+Anaysis of change scores shows significant improvement in disease risk condition. This analysis replicates the original analyses and the primary pre-registered analysis. __We directly replicate the original findings.__
 
 ```{r}
 fit_aov <- aov(change ~ condition, data = d_sum)
 summary(fit_aov)
 
-t.test(change ~ condition, data = d_sum %>% filter(condition!="autism"))
-t.test(change ~ condition, data = d_sum %>% filter(condition!="bird"))
+t.test(change ~ condition, data = d_sum %>% filter(condition!="Autism Correction"))
+dr_control_D <- suppressWarnings(cohen.d(change ~ condition, data = d_sum %>% filter(condition!="Autism Correction"))$estimate)
 
+t.test(change ~ condition, data = d_sum %>% filter(condition!="Control"))
+dr_autism_D <- suppressWarnings(cohen.d(change ~ condition, data = d_sum %>% filter(condition!="Control"))$estimate)
 ```
 
-However, ANOVA on change scores is not the optimal approach to analyzing these data. In the following we explore some other approaches that should let us more accurately assess the true magnitude of the intervention's effect.
+Comparing the magnitude of the effects, the effect sizes in this replication study are smaller than what was originally observed, with the Disease Risk vs Control D = `r as.numeric(dr_control_D) %>% round(3)` (compared with .41 originally) and Disease Risk vs Autism Correction D = `r as.numeric(dr_autism_D) %>% round(3)` (compared with .33 originally).
 
-## Model: Posttest scores by condition, controlling for pretest
+# II. "Best Model" Replication
+
+ANOVA on change scores is not the optimal approach to analyzing these data. Next, we explore some better ways of modeling the data from this experiment, and evaluate whether these improved statistical models also support the conclusions drawn in the original paper.
+
+The change score analysis has a few issues:
+
+1. Fails to control for or reveal pretest differences between conditions
+2. Change scores influenced by both pre-test and posttest measurement error (likely contaminated by regression to the mean)
+3. Fails to respect boundaries of original scale (e.g., for Ps near ceiling, negative change scores are largely uninformative)
+4. Assumes normal distribution (change scores somewhat non-normal)
+
+Other approaches can avoid some or all of these issues. 
+
+## Posttest scores by condition, controlling for pretest
 
 ### Linear regression model
 
+Using a linear regression predicting posttest from condition and pretest begins to mitigate the first two issues: it helps to control for pretest differences among conditions (though these can still complicate inference) and allows for modeling error in predicting posttest scores from pretest scores.
+
 ```{r}
-fit_lm <- lm(posttest ~ scale(pretest) * condition,
+fit_lm <- lm(posttest ~ scale(pretest) + condition,
            data=d_sum)
 
 summary(fit_lm)
 ```
 
+However, this analyses fails to account for the boundedness of the scale nor the non-normal distribution of responses.
+
 ### Beta Regression
+
+Beta regression is a more appropriate approach to analyzing bounded, skewed, and heteroscedastic data--three properties of the vaccine attitudes scale responses. For more info, see [this paper](https://www.ncbi.nlm.nih.gov/pubmed/16594767): Smithson M, Verkuilen J (2006) A better lemon squeezer? Maximum-likelihood regression with beta-distributed dependent variables. _Psychol Methods._ 11 (1): 54-71.
+
+The use of Beta regression addresses all four of the major concerns in the change score analyses.
 
 ```{r}
 fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
@@ -245,7 +293,16 @@ fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
 summary(fit_beta)
 ```
 
-and in BRMS ...
+```{r, include=F}
+fit_lm_scaled <- lm(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
+           data=d_sum)
+```
+
+Beta regression is justified over linear regression on theoretical grounds, but it is also supported on empirical grounds. Comparing models by AIC, the beta regression model is very strongly preferred, with _AIC_ = `r round(AIC(fit_beta),1)` versus `r round(AIC(fit_lm_scaled),1)` for the linear regression model.
+
+### Bayesian beta regression
+
+We also conduct beta regression using bayesian estimation in BRMS.
 
 ```{r}
 # fit_brm_beta <- brm(
@@ -258,7 +315,7 @@ and in BRMS ...
 # )
 ```
 
-Plotting condition effects estimated from the model (50% credible intervals).
+This allows us to plot condition effects estimated from the model while marignalizing over pretest scores, along with 50% credible intervals.
 
 ```{r}
 # summary(fit_brm_beta)
@@ -276,9 +333,9 @@ Plotting condition effects estimated from the model (50% credible intervals).
 # plt.me2
 ```
 
-## Hierarchical ordinal regression
+### Hierarchical ordinal regression
 
-This is likely the __MOST__ appropriate analysis, accounting for the ordinal nature of the underlying response variable, as well as possible differences among scale items.
+A final concern in all of the above analyses, on change scores or on posttest scores, is the use of "scores". That is, the averaging of several ordinal likert scale ratings into a continuous scale variable. Using hierarchical ordinal regression, we can avoid this averaging, and directly model the observed data. This accounts for the ordinal nature of the underlying response variable, as well as possible differences among scale items that are lost to averaging.
 
 ```{r}
 # fit_brm_cum_posttest <- brm(
@@ -295,9 +352,43 @@ This is likely the __MOST__ appropriate analysis, accounting for the ordinal nat
 # summary(fit_brm_cum_posttest)
 ```
 
-# "Vaccine intent" scale results
+## Further analyses
 
-Here's a plot of the change scores for the vaccine intent scale across conditions. There don't appear to be any differences. (and note change in y-axis scale compared to previous plots)
+To be explored:
+
+- Examine demographics of participants
+- Compare parents vs non-parents
+- Examine predictions of vaccine behavior for both scales
+- Estimate predicted reduction in vaccine refusals based on attitude change and behavior
+
+#### Effect of autism correction condition on "autism" item
+
+All told, the Autism Correction condition did not affect overall vaccine attitudes. However, it did clearly reduce agreement with the added item "Some vaccines cause autism in healthy children" (as found originally). So, it's possible that people accept the information in the condiiton, but that it is only a very small part of what drives their overall attitudes toward vaccination.
+
+```{r}
+d %>%
+  filter(Scale=="autism") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  summarize(change_score = posttest-pretest) %>%
+  group_by(condition) %>%
+  summarize(mean_change = mean(change_score),
+            ul = mean(change_score) + stderr(change_score),
+            ll = mean(change_score) - stderr(change_score)) %>%
+  ggplot(aes(x=condition, fill=condition, y = mean_change, ymin=ll, ymax=ul)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(width=.25) +
+  theme_minimal() +
+  labs(title="Change Score Analysis: 'Autism' Item",
+       y = "Mean Change Score",
+       x = "Condition",
+       fill = "Condition")
+```
+
+# III. "Vaccine intent" scale results
+
+Here's a plot of the change scores for the vaccine intent scale across conditions. The differences here are somewhat smaller than for "vaccine attitudes", but they appear significant.
 
 ```{r}
 d %>%
@@ -319,7 +410,7 @@ d %>%
 
 ## Linear regression
 
-Nothing much going on here.
+Under the linear regression model, the contrast between control and disease risk conditions is just barely non-significant at the $\alpha = .05$ level.
 
 ```{r}
 d_sum_intent <- d %>%
@@ -328,13 +419,13 @@ d_sum_intent <- d %>%
   summarize(mean_rating = mean(rating)) %>%
   spread(phase, mean_rating)
 
-fit_lm_intent <- lm(posttest ~ scale(pretest) * condition, data = d_sum_intent)
+fit_lm_intent <- lm(posttest ~ scale(pretest) + condition, data = d_sum_intent)
 summary(fit_lm_intent)
 ```
 
 ## Beta regression
 
-Nor here.
+However, by beta regression, the main contrast is significant.
 
 ```{r}
 d_sum_intent <- d %>%
@@ -351,9 +442,15 @@ fit_beta_intent <- betareg(
 summary(fit_beta_intent)
 ```
 
+```{r include = F}
+fit_lm_intent_scaled <- lm(rescale_beta(posttest,1,6) ~ scale(pretest) * condition, data = d_sum_intent)
+```
+
+By AIC, the beta regression model is very strongly preferred, with AIC = `r round(AIC(fit_beta_intent),1)` versus `r round(AIC(fit_lm_intent_scaled),1)`.
+
 ## Ordinal HLM
 
-Nor, finally, here.
+Again, this is likely the most appropriate analysis for these data.
 
 ```{r}
 # fit_brm_cum_posttest_intent <- brm(
@@ -372,9 +469,11 @@ Nor, finally, here.
 
 # Summary
 
-This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. However, despite generally improving attitudes, the intervention did not increase participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale. Further analyses are needed to begin exploring the reasons for this.
+This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. The intervention also increased participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale.
 
-# Replication notes
+----------------------------------------
+
+### Replication notes
 
 Analyses can be replicated using `derekpowell/rstudio-dmp:20180321` Docker image.
 
