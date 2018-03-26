@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/25/18, 07:55 PM__
+__NOTE: These are preliminary analyses as of 3/26/18, 8:59 AM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -144,6 +144,20 @@ d_sum <- d %>%
   summarize(mean_rating = mean(rating)) %>%
   spread(phase, mean_rating) %>%
   mutate(change = posttest - pretest)
+```
+
+## Check scale reliability and confirm proper reverse coding
+
+For vaccine attitudes ...
+
+```{r}
+d %>% filter(Scale=="vaxAttitude", phase=="pretest") %>% spread(item, rating) %>% select(doctors:uncommon) %>% psych::alpha()
+```
+
+for vaccine intentions ...
+
+```{r}
+d %>% filter(Scale=="vaxIntent", phase=="pretest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
 ```
 
 ## Comparing conditions at pretest
