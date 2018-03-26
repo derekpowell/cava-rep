@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/26/18, 8:59 AM__
+__NOTE: These are preliminary analyses as of 3/26/18, 11:18 AM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -208,8 +208,8 @@ d %>%
   geom_bar(stat="identity") +
   geom_errorbar(width=.25) +
   theme_minimal() +
-  labs(title="Change Score Analysis")
-
+  labs(title="Change Score Analysis",
+       subtitle = "Error bars are standard errors")
 ```
 
 Anaysis of change scores shows significant improvement in disease risk condition. This analysis replicates the original analyses and the primary pre-registered analysis. We directly replicate the original findings.
@@ -239,7 +239,7 @@ summary(fit_lm)
 ### Beta Regression
 
 ```{r}
-fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
+fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) * condition,
            data=d_sum)
 
 summary(fit_beta)
@@ -297,7 +297,7 @@ This is likely the __MOST__ appropriate analysis, accounting for the ordinal nat
 
 # "Vaccine intent" scale results
 
-Here's a plot of the change scores for the vaccine intent scale across conditions. There don't appear to be any differences. (and note change in y-axis scale compared to previous plots)
+Here's a plot of the change scores for the vaccine intent scale across conditions (note change in y-axis scale compared to previous plots):
 
 ```{r}
 d %>%
@@ -314,12 +314,46 @@ d %>%
   geom_bar(stat="identity") +
   geom_errorbar(width=.25) +
   theme_minimal() +
-  labs(title="Change Score Analysis: Vaccine Intent")
+  labs(title="Change Score Analysis: Vaccine Intent",
+       subtitle = "Error bars are standard errors")
 ```
+
+```{r}
+d %>%
+  filter(Scale=="vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  summarize(change_score = posttest-pretest) %>%
+  ggplot(aes(x = change_score, fill = condition)) +
+  # geom_histogram(binwidth = 0.25, alpha = 0.25, position = "identity") +
+  geom_density(alpha = 0.25, position = "identity") +
+  geom_vline(xintercept = 0, lty = 2) +
+  theme_minimal() +
+  labs(title = "Distribution of Change Scores: Vaccine Intent",
+       x = "Change Score", y = "Density", fill = "Condition")
+
+d %>%
+  filter(Scale=="vaxIntent") %>%
+  mutate(phase = factor(phase, levels = c("pretest", "posttest"))) %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  ggplot(aes(x = phase, color = condition, y = mean_rating)) +
+  facet_grid(~ condition) +
+  geom_line(aes(group = workerId), alpha = 0.1, size = 1) +
+  geom_point(alpha = 0.1, size = 1) +
+  scale_y_continuous(limits = c(0, 6), breaks = 0:6) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Changes at the Individual Level: Vaccine Intent",
+       x = "Timepoint", y = "Vaccine Intent Score")
+```
+
+
 
 ## Linear regression
 
-Nothing much going on here.
+A "marginally significant" effect here...
 
 ```{r}
 d_sum_intent <- d %>%
@@ -334,7 +368,7 @@ summary(fit_lm_intent)
 
 ## Beta regression
 
-Nor here.
+...which is significant here.
 
 ```{r}
 d_sum_intent <- d %>%
@@ -344,7 +378,7 @@ d_sum_intent <- d %>%
   spread(phase, mean_rating)
 
 fit_beta_intent <- betareg(
-  rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+  rescale_beta(posttest, 1, 6) ~ scale(pretest) * condition,
   data = d_sum_intent
 )
 
@@ -353,7 +387,7 @@ summary(fit_beta_intent)
 
 ## Ordinal HLM
 
-Nor, finally, here.
+[KW has not re-run.]
 
 ```{r}
 # fit_brm_cum_posttest_intent <- brm(
@@ -372,7 +406,7 @@ Nor, finally, here.
 
 # Summary
 
-This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. However, despite generally improving attitudes, the intervention did not increase participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale. Further analyses are needed to begin exploring the reasons for this.
+This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. The intervention also seems to have increased participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale.
 
 # Replication notes
 
