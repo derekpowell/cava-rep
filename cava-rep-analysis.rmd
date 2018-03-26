@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/24/18, 11:32 AM__
+__NOTE: These are preliminary analyses as of 3/25/18, 07:55 PM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -105,17 +105,19 @@ d_untidy <- d_merge %>%
     vaxIntent_post_confident = vax2_Vax1_35,
     vaxIntent_post_wouldNever = vax2_Vax1_36
   ) %>%
-  mutate(
+  mutate( # implement reverse coding
     vax_pre_risks = 7 - vax_pre_risks,
     vax_post_risks = 7 - vax_post_risks,
     vax_pre_uncommon = 7 - vax_pre_uncommon,
     vax_post_uncommon = 7 - vax_post_uncommon,
-    vaxIntent_pre_risks = vax_pre_risks,
-    vaxIntent_post_risks = vax_post_risks,
     vaxIntent_pre_spreadOut = 7 - vaxIntent_pre_spreadOut,
     vaxIntent_post_spreadOut = 7 - vaxIntent_post_spreadOut,
     vaxIntent_pre_wouldNever = 7 - vaxIntent_pre_wouldNever,
     vaxIntent_post_wouldNever = 7 - vaxIntent_post_wouldNever
+  ) %>% 
+  mutate( # add duplicates to cover both scales
+    vaxIntent_pre_risks = vax_pre_risks,
+    vaxIntent_post_risks = vax_post_risks
   )
 ```
 
@@ -228,32 +230,32 @@ summary(fit_beta)
 and in BRMS ...
 
 ```{r}
-fit_brm_beta <- brm(
-  rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
-  data = d_sum,
-  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
+# fit_brm_beta <- brm(
+#   rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+#   data = d_sum,
+#   family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+#   control = list(adapt_delta = .85),
+#   cores = parallel::detectCores(),
+#   iter = 2000
+# )
 ```
 
 Plotting condition effects estimated from the model (50% credible intervals).
 
 ```{r}
-summary(fit_brm_beta)
-
-me2 <- marginal_effects(fit_brm_beta, effects = "condition", probs = c(.25, .75))
-plt.me2 <- plot(me2,
-  effects = "condition",
-  plot = FALSE,
-  rug = TRUE,
-  theme = ggplot2::theme_get()
-)[[1]] + 
-  labs(title = "Beta Regression: Marginal Effects") + 
-  theme_minimal()
-
-plt.me2
+# summary(fit_brm_beta)
+# 
+# me2 <- marginal_effects(fit_brm_beta, effects = "condition", probs = c(.25, .75))
+# plt.me2 <- plot(me2,
+#   effects = "condition",
+#   plot = FALSE,
+#   rug = TRUE,
+#   theme = ggplot2::theme_get()
+# )[[1]] + 
+#   labs(title = "Beta Regression: Marginal Effects") + 
+#   theme_minimal()
+# 
+# plt.me2
 ```
 
 ## Hierarchical ordinal regression
@@ -261,18 +263,18 @@ plt.me2
 This is likely the __MOST__ appropriate analysis, accounting for the ordinal nature of the underlying response variable, as well as possible differences among scale items.
 
 ```{r}
-fit_brm_cum_posttest <- brm(
-  posttest ~ pretest + condition + (1 | workerId) + (1 | item),
-  data = d %>% filter(Scale=="vaxAttitude") %>% spread(phase, rating),
-  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
+# fit_brm_cum_posttest <- brm(
+#   posttest ~ pretest + condition + (1 | workerId) + (1 | item),
+#   data = d %>% filter(Scale=="vaxAttitude") %>% spread(phase, rating),
+#   family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+#   control = list(adapt_delta = .85),
+#   cores = parallel::detectCores(),
+#   iter = 2000
+# )
 ```
 
 ```{r}
-summary(fit_brm_cum_posttest)
+# summary(fit_brm_cum_posttest)
 ```
 
 # "Vaccine intent" scale results
@@ -336,18 +338,18 @@ summary(fit_beta_intent)
 Nor, finally, here.
 
 ```{r}
-fit_brm_cum_posttest_intent <- brm(
-  posttest ~ pretest + condition + (1 | workerId) + (1 | item),
-  data = d %>% filter(Scale=="vaxIntent") %>% spread(phase, rating),
-  family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
+# fit_brm_cum_posttest_intent <- brm(
+#   posttest ~ pretest + condition + (1 | workerId) + (1 | item),
+#   data = d %>% filter(Scale=="vaxIntent") %>% spread(phase, rating),
+#   family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
+#   control = list(adapt_delta = .85),
+#   cores = parallel::detectCores(),
+#   iter = 2000
+# )
 ```
 
 ```{r}
-summary(fit_brm_cum_posttest_intent)
+# summary(fit_brm_cum_posttest_intent)
 ```
 
 # Summary
