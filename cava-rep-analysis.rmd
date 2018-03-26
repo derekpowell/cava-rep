@@ -355,13 +355,12 @@ A final concern in all of the above analyses, on change scores or on posttest sc
 To be explored:
 
 - Examine demographics of participants
-- Examine predictions of vaccine behavior for both scales
+- Examine predictions of vaccine behavior for both scales (started)
 - Estimate predicted reduction in vaccine refusals based on attitude change and behavior
 
 #### Vaccine behavior: delay and refusal 
 
 How many parents have delayed, refused, or sought exemptions from vaccines? _I just observed that the exemption item was not coded correctly on Qualtrics, have corrected it there but will need to redownload data - 3/26/18, 3:48 PM._
-
 
 
 ```{r}
