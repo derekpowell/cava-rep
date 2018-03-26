@@ -107,14 +107,14 @@ d_untidy <- d_merge %>%
   ) %>%
   mutate(
     vax_pre_risks = 7 - vax_pre_risks,
-    vax_pre_uncommon = 7 - vax_pre_uncommon,
     vax_post_risks = 7 - vax_post_risks,
-    vaxIntent_pre_risks = 7 - vax_pre_risks,
-    vaxIntent_pre_spreadOut = 7 - vaxIntent_pre_spreadOut,
-    vaxIntent_post_wouldNever = 7 - vaxIntent_post_wouldNever,
+    vax_pre_uncommon = 7 - vax_pre_uncommon,
     vax_post_uncommon = 7 - vax_post_uncommon,
-    vaxIntent_post_risks = 7 - vax_post_risks,
+    # vaxIntent_pre_risks = 7 - vax_pre_risks,
+    # vaxIntent_post_risks = 7 - vax_post_risks,
+    vaxIntent_pre_spreadOut = 7 - vaxIntent_pre_spreadOut,
     vaxIntent_post_spreadOut = 7 - vaxIntent_post_spreadOut,
+    vaxIntent_pre_wouldNever = 7 - vaxIntent_pre_wouldNever,
     vaxIntent_post_wouldNever = 7 - vaxIntent_post_wouldNever
   )
 ```
