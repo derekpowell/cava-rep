@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/26/18, 8:59 AM__
+__NOTE: These are preliminary analyses as of 3/26/18, 4:08 PM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -180,7 +180,7 @@ Scales have been properly coded and can be considered reliable.
 
 Before considering change scores, we should confirm there are no meaningful pretest differences between conditions. The plot below suggests 
 
-```{r}
+```{r, fig.align="center"}
 # d_sum %>%
 #   ggplot(aes(x=pretest, fill=condition)) +
 #   geom_density(alpha=.25) +
@@ -202,13 +202,11 @@ summary(fit_pre)
 
 Participants in the autism correction and disease risk conditions had slightly (tho non-significantly) higher pretest scores than participants in the control condition. Presumably, this should have made it all the more difficult to improve attitudes in those conditions relative to control.
 
-
-
 # I. Direct Replication
 
 ## Plotting Change Scores
 
-Plotting to replicate figure 1 from _PNAS_ paper.
+Plotting to replicate Figure 1 from _PNAS_ paper.
 
 ```{r}
 # standard error function
@@ -357,9 +355,155 @@ A final concern in all of the above analyses, on change scores or on posttest sc
 To be explored:
 
 - Examine demographics of participants
-- Compare parents vs non-parents
 - Examine predictions of vaccine behavior for both scales
 - Estimate predicted reduction in vaccine refusals based on attitude change and behavior
+
+#### Vaccine behavior: delay and refusal 
+
+How many parents have delayed, refused, or sought exemptions from vaccines? _I just observed that the exemption item was not coded correctly on Qualtrics, have corrected it there but will need to redownload data - 3/26/18, 3:48 PM._
+
+
+
+```{r}
+d %>%
+  group_by(parent, workerId) %>%
+  summarize(
+    flu = mean(flu, na.rm=TRUE),
+    flu_next = mean(flu2, na.rm=TRUE),
+    flu_child = mean(flu3, na.rm=TRUE),
+    flu_child_next = mean(flu4, na.rm=TRUE),
+    delay = mean(delay, na.rm=TRUE),
+    refuse = mean(refuse, na.rm=TRUE)) %>%
+  summarize(
+    flu = mean(flu, na.rm=TRUE),
+    flu_next = mean(flu_next, na.rm=TRUE),
+    flu_child = mean(flu_child, na.rm=TRUE),
+    flu_child_next = mean(flu_child_next, na.rm=TRUE),
+    delay = mean(delay, na.rm=TRUE),
+    refuse = mean(refuse, na.rm=TRUE))
+```
+
+How do pretest vaccine attitudes predict refusals?
+
+```{r}
+d_sum_behavior <- d %>%
+  filter(Scale=="vaxAttitude") %>%
+  mutate(young_parent = ifelse( ((parent == 1 & youngest < 12) | (parent == 0 & hope_par == 1)), 1, 0 )) %>%
+  mutate(young_parent = ifelse(is.na(young_parent),0,young_parent)) %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating),
+            young_parent = first(young_parent),
+            refuse = first(refuse),
+            delay = first(delay),
+            flu = first(flu),
+            flu_child = first(flu3)) %>%
+  spread(phase, mean_rating) %>%
+  mutate(change = posttest - pretest)
+
+fit_refuse <- glm(refuse ~ pretest, data = d_sum_behavior, family="binomial")
+summary(fit_refuse)
+```
+
+```{r}
+
+# here's some sloppy code to plot that model
+
+model <- glm(refuse ~ pretest,
+  data = d_sum_behavior,
+  family=binomial) #etc
+
+temp.data <- data.frame(
+  pretest =  seq(from=1, to = 6, length.out = 300))
+
+temp.data <- cbind(temp.data, predict(model, temp.data, type = "link", se.fit=TRUE))
+
+temp.data <- within(temp.data, {
+  yHat <- model$family$linkinv(fit)
+  LL <- model$family$linkinv(fit - 1.96 * se.fit)
+  UL <- model$family$linkinv(fit + 1.96 * se.fit)
+})
+
+plt.refuse <- ggplot(temp.data, aes(x = pretest, y = yHat)) +
+  geom_ribbon(aes(ymin = LL, ymax = UL), fill="grey", alpha = .4) +
+  geom_line(colour = "blue") +
+  labs(x = "Vaccine attitudes (pre-test)", y = "P(Refusal)", title="Child Vaccination refusals") +
+  geom_jitter(data=d_sum_behavior, 
+              aes(x=pretest, y=refuse), 
+              inherit.aes = FALSE,
+              height=.025,
+              width=.05,
+              alpha=.5,
+              shape=1) +
+  theme_minimal(base_size = 18) +
+  theme(aspect.ratio = 1)
+
+plt.refuse
+
+```
+
+#### Parents vs non-parents
+
+How many Ps are parents?
+
+```{r}
+d %>% 
+  group_by(condition, workerId) %>%
+  summarize(parent = first(parent)) %>%
+  summarize(prop_parent = mean(parent))
+  
+```
+
+Looks like approximately 44-45% of participants are parents. Let's see how the age of their youngest children breaks down.
+
+```{r}
+
+d <- d %>% 
+  mutate(youngest = as.numeric(as.character(youngest)),
+         oldest = as.numeric(as.character(oldest)),
+         youngest = ifelse(num_child==1,oldest,youngest))
+d %>%
+  group_by(workerId) %>%
+  summarize(youngest = mean(youngest)) %>%
+  ggplot(aes(x=youngest)) +
+  geom_histogram()
+```
+
+And how many are planning to become parents soon?
+
+- 0 = no
+- 1 = Yes, in next 1-2 years
+- 2 = Yes, in next 2-5 years
+- 3 = yes, but not for 5 or more years
+
+```{r}
+d %>%
+  group_by(workerId) %>%
+  summarize(hope_par = first(hope_par)) %>%
+  ggplot(aes(x=hope_par)) +
+  geom_histogram()
+```
+
+Here we can focus in on the primary demographic of our interventions, parents of young children and those who are soon to be parents. Below, we code as `young_parent` parents with children under 12 and people who hope to become parents within the next 2 years.
+
+```{r}
+
+d_sum_pars <- d %>%
+  filter(Scale=="vaxAttitude") %>%
+  mutate(young_parent = ifelse( ((parent == 1 & youngest < 12) | (parent == 0 & hope_par == 1)), 1, 0 )) %>%
+  mutate(young_parent = ifelse(is.na(young_parent),0,young_parent)) %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating),
+            young_parent = first(young_parent)) %>%
+  spread(phase, mean_rating) %>%
+  mutate(change = posttest - pretest)
+
+fit_beta_pars <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition*young_parent,
+           data=d_sum_pars)
+
+summary(fit_beta_pars)
+```
+
+
 
 #### Effect of autism correction condition on "autism" item
 

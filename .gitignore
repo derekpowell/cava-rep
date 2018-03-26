@@ -45,3 +45,6 @@ vignettes/*.pdf
 
 # script to obscure workerIds and ip addresses
 redact.R
+
+# Rpubs stuff
+/rsconnect/*
