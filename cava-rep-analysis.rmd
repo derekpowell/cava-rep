@@ -229,10 +229,10 @@ d %>%
   geom_errorbar(width=.25) +
   theme_minimal() +
   labs(title="Change Score Analysis",
+       subtitle = "Error bars are standard errors",
        y = "Mean Change Score",
        x = "Condition",
        fill = "Condition")
-
 ```
 
 Anaysis of change scores shows significant improvement in disease risk condition. This analysis replicates the original analyses and the primary pre-registered analysis. __We directly replicate the original findings.__
@@ -285,7 +285,7 @@ Beta regression is a more appropriate approach to analyzing bounded, skewed, and
 The use of Beta regression addresses all four of the major concerns in the change score analyses.
 
 ```{r}
-fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
+fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) * condition,
            data=d_sum)
 
 summary(fit_beta)
@@ -549,7 +549,39 @@ d %>%
   geom_bar(stat="identity") +
   geom_errorbar(width=.25) +
   theme_minimal() +
-  labs(title="Change Score Analysis: Vaccine Intent")
+  labs(title="Change Score Analysis: Vaccine Intent",
+       subtitle = "Error bars are standard errors")
+```
+
+```{r}
+d %>%
+  filter(Scale=="vaxIntent") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  summarize(change_score = posttest-pretest) %>%
+  ggplot(aes(x = change_score, fill = condition)) +
+  # geom_histogram(binwidth = 0.25, alpha = 0.25, position = "identity") +
+  geom_density(alpha = 0.25, position = "identity") +
+  geom_vline(xintercept = 0, lty = 2) +
+  theme_minimal() +
+  labs(title = "Distribution of Change Scores: Vaccine Intent",
+       x = "Change Score", y = "Density", fill = "Condition")
+
+d %>%
+  filter(Scale=="vaxIntent") %>%
+  mutate(phase = factor(phase, levels = c("pretest", "posttest"))) %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  ggplot(aes(x = phase, color = condition, y = mean_rating)) +
+  facet_grid(~ condition) +
+  geom_line(aes(group = workerId), alpha = 0.1, size = 1) +
+  geom_point(alpha = 0.1, size = 1) +
+  scale_y_continuous(limits = c(0, 6), breaks = 0:6) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Changes at the Individual Level: Vaccine Intent",
+       x = "Timepoint", y = "Vaccine Intent Score")
 ```
 
 ## Linear regression
@@ -579,7 +611,7 @@ d_sum_intent <- d %>%
   spread(phase, mean_rating)
 
 fit_beta_intent <- betareg(
-  rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+  rescale_beta(posttest, 1, 6) ~ scale(pretest) * condition,
   data = d_sum_intent
 )
 
@@ -614,8 +646,6 @@ Again, this is likely the most appropriate analysis for these data.
 # Summary
 
 This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. The intervention also increased participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale.
-
-----------------------------------------
 
 ### Replication notes
 
