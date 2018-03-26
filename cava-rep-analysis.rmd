@@ -152,12 +152,16 @@ For vaccine attitudes ...
 
 ```{r}
 d %>% filter(Scale=="vaxAttitude", phase=="pretest") %>% spread(item, rating) %>% select(doctors:uncommon) %>% psych::alpha()
+
+d %>% filter(Scale=="vaxAttitude", phase=="posttest") %>% spread(item, rating) %>% select(doctors:uncommon) %>% psych::alpha()
 ```
 
 for vaccine intentions ...
 
 ```{r}
 d %>% filter(Scale=="vaxIntent", phase=="pretest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
+
+d %>% filter(Scale=="vaxIntent", phase=="posttest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
 ```
 
 ## Comparing conditions at pretest
