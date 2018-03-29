@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/26/18, 4:08 PM__
+__NOTE: These are preliminary analyses as of 3/29/18, 2:26 PM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -154,7 +154,7 @@ d_sum <- d %>%
 ```
 
 
-# Preliminaries
+# Preliminaries {.tabset}
 
 ## Check scale reliability and confirm proper reverse coding
 
@@ -350,7 +350,7 @@ A final concern in all of the above analyses, on change scores or on posttest sc
 # summary(fit_brm_cum_posttest)
 ```
 
-## Further analyses
+## Further analyses {.tabset}
 
 To be explored:
 
@@ -358,7 +358,7 @@ To be explored:
 - Examine predictions of vaccine behavior for both scales (started)
 - Estimate predicted reduction in vaccine refusals based on attitude change and behavior
 
-#### Vaccine behavior: delay and refusal 
+### Vaccine behavior: delay and refusal 
 
 How many parents have delayed, refused, or sought exemptions from vaccines? _I just observed that the exemption item was not coded correctly on Qualtrics, have corrected it there but will need to redownload data - 3/26/18, 3:48 PM._
 
@@ -440,7 +440,7 @@ plt.refuse
 
 ```
 
-#### Parents vs non-parents
+### Parents vs non-parents
 
 How many Ps are parents?
 
@@ -504,7 +504,7 @@ summary(fit_beta_pars)
 
 
 
-#### Effect of autism correction condition on "autism" item
+### Effect of autism correction condition on "autism" item
 
 All told, the Autism Correction condition did not affect overall vaccine attitudes. However, it did clearly reduce agreement with the added item "Some vaccines cause autism in healthy children" (as found originally). So, it's possible that people accept the information in the condiiton, but that it is only a very small part of what drives their overall attitudes toward vaccination.
 
