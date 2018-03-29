@@ -646,6 +646,10 @@ Again, this is likely the most appropriate analysis for these data.
 
 This study successfully replicated the original findings of the _PNAS_ paper according to both its "direct replication" criterion and the "best model" criterion. The "disease risk" manipulation significantly improved attitudes toward vaccines as measured by the 5-item "vaccine attitudes" scale. The intervention also increased participants' reported intentions to vaccinate their children, as measured by our new 5-item "vaccine intentions" scale.
 
+### Miscellany
+
+Part 3 is being conducted today, March 29, 2018. A participante noticed a typo in the "confident" vaccine Intent item, it said "... in the right thing to do" when it should have said "... is the right thing to do".
+
 ### Replication notes
 
 Analyses can be replicated using `derekpowell/rstudio-dmp:20180321` Docker image.
