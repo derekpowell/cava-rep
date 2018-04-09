@@ -6,7 +6,7 @@ output:
     code_folding: hide
 ---
 
-__NOTE: These are preliminary analyses as of 3/29/18, 2:26 PM__
+__NOTE: These are preliminary analyses as of 4/9/18, 10:55 AM__
 
 This is an R notebook to analyze the data from the Countering AntiVaccination Attitudes (CAVA) replication study.
 
@@ -308,13 +308,6 @@ fit_beta <- betareg(rescale_beta(posttest,1,6) ~ scale(pretest) * condition,
 summary(fit_beta)
 ```
 
-```{r, include=F}
-fit_lm_scaled <- lm(rescale_beta(posttest,1,6) ~ scale(pretest) + condition,
-           data=d_sum)
-```
-
-Beta regression is justified over linear regression on theoretical grounds, but it is also supported on empirical grounds. Comparing models by AIC, the beta regression model is very strongly preferred, with _AIC_ = `r round(AIC(fit_beta),1)` versus `r round(AIC(fit_lm_scaled),1)` for the linear regression model.
-
 ### Bayesian beta regression
 
 We also conduct beta regression using bayesian estimation in BRMS.
@@ -373,8 +366,8 @@ In addition to replicating the original study, we also
 
 ```{r}
 d_post2 <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day3-2018-04-02.csv") %>%
-  select(workerId, SC1, contains("Vax3")) %>%
   filter(SC1 == 1) %>%
+  select(workerId, contains("Vax3")) %>%
   rename(
     vax_post2_risks = Vax3_Vax1_1,
     vax_post2_herd = Vax3_Vax1_2,
