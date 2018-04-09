@@ -77,13 +77,13 @@ rescale_beta <- function(x, lower, upper) {
 d_pre <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day1-2018-03-23.csv") %>%
   select(workerId, age:Vax1_Vax1_36, eligible, study_time, payment)
 
-d_post <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day2-2018-03-23.csv") %>%
+d_post <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day2-2018-04-02.csv") %>%
   select(workerId, condition, vax2_Vax1_1:vax2_Vax1_36, parent:SC1)
 
 d_merge <- merge(d_pre,d_post, by="workerId") %>%
   as_tibble() %>%
-  filter(SC1==4) %>%
-  filter(Attention==1)
+  filter(SC1==4) %>% # passed all checks
+  filter(Attention==1) # paid attention
 
 # rename variables and do reverse coding
 
@@ -142,7 +142,8 @@ d <- d_untidy %>%
   mutate(item=gsub("vax_pre_","", item)) %>%
   mutate(item=gsub("vax_post_","", item)) %>%
   mutate(item=gsub("vaxIntent_pre_","", item)) %>%
-  mutate(item=gsub("vaxIntent_post_","", item))
+  mutate(item=gsub("vaxIntent_post_","", item)) %>%
+  mutate(phase = factor(phase, levels = c("pretest","posttest","posttest2")))
 
 # and reducing to a "summary" dataset
 d_sum <- d %>%
@@ -161,17 +162,33 @@ d_sum <- d %>%
 For vaccine attitudes ...
 
 ```{r}
-d %>% filter(Scale=="vaxAttitude", phase=="pretest") %>% spread(item, rating) %>% select(doctors:uncommon) %>% psych::alpha()
+d %>% 
+  filter(Scale == "vaxAttitude", phase == "pretest") %>% 
+  spread(item, rating) %>% 
+  select(doctors:uncommon) %>% 
+  psych::alpha()
 
-d %>% filter(Scale=="vaxAttitude", phase=="posttest") %>% spread(item, rating) %>% select(doctors:uncommon) %>% psych::alpha()
+d %>% 
+  filter(Scale == "vaxAttitude", phase == "posttest") %>% 
+  spread(item, rating) %>% 
+  select(doctors:uncommon) %>% 
+  psych::alpha()
 ```
 
 for vaccine intentions ...
 
 ```{r}
-d %>% filter(Scale=="vaxIntent", phase=="pretest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
+d %>%
+  filter(Scale == "vaxIntent", phase == "pretest") %>%
+  spread(item, rating) %>%
+  select(confident:wouldNever) %>%
+  psych::alpha()
 
-d %>% filter(Scale=="vaxIntent", phase=="posttest") %>% spread(item, rating) %>% select(confident:wouldNever) %>% psych::alpha()
+d %>%
+  filter(Scale == "vaxIntent", phase == "posttest") %>%
+  spread(item, rating) %>%
+  select(confident:wouldNever) %>%
+  psych::alpha()
 ```
 
 Scales have been properly coded and can be considered reliable. 
@@ -350,6 +367,268 @@ A final concern in all of the above analyses, on change scores or on posttest sc
 # summary(fit_brm_cum_posttest)
 ```
 
+## Delayed post-test results
+
+In addition to replicating the original study, we also 
+
+```{r}
+d_post2 <- read_qualtrics_csv("data/Vaccine+PNAS+replication+day3-2018-04-02.csv") %>%
+  select(workerId, SC1, contains("Vax3")) %>%
+  filter(SC1 == 1) %>%
+  rename(
+    vax_post2_risks = Vax3_Vax1_1,
+    vax_post2_herd = Vax3_Vax1_2,
+    vax_post2_plan = Vax3_Vax1_3,
+    vax_post2_uncommon = Vax3_Vax1_4,
+    vax_post2_doctors = Vax3_Vax1_5,
+    vax_post2_autism = Vax3_Vax1_6,
+    vaxIntent_post2_Iwould = Vax3_Vax1_33,
+    vaxIntent_post2_spreadOut = Vax3_Vax1_34,
+    vaxIntent_post2_confident = Vax3_Vax1_35,
+    vaxIntent_post2_wouldNever = Vax3_Vax1_36
+  ) %>%
+  mutate(
+    vax_post2_risks = 7 - vax_post2_risks,
+    vax_post2_uncommon = 7 - vax_post2_uncommon,
+    vaxIntent_post2_spreadOut = 7 - vaxIntent_post2_spreadOut,
+    vaxIntent_post2_wouldNever = 7 - vaxIntent_post2_wouldNever
+  ) %>%
+  mutate(
+    vaxIntent_post2_risks = vax_post2_risks
+  )
+
+d_untidy2 <- d_post2 %>% 
+  # filter(Vax3_Vax1_check == 5) %>%
+  # select(-Vax3_Vax1_check) %>%
+  merge(d_untidy, by="workerId") %>%
+  select(-Vax3_Vax1_check) %>%
+  gather(item, rating, contains("vax"))
+
+d2 <- d_untidy2 %>%
+  mutate(
+    rating = as.integer(rating),
+    phase = ifelse(grepl("_pre_", item),"pretest",
+                   ifelse(grepl("_post2_", item), "posttest2", "posttest")),
+    Scale = ifelse(grepl("vaxIntent_",item), "vaxIntent", "vaxAttitude"),
+    condition = factor(condition, 
+                       levels=c("bird","autism","cdc_danger"),
+                       labels=c("Control","Autism Correction", "Disease Risk"))
+    ) %>%
+  mutate(condition = relevel(condition, ref="Control")) %>%
+  mutate(Scale = ifelse(grepl("autism",item), "autism", Scale)) %>%
+  mutate(item=gsub("vax_pre_","", item)) %>%
+  mutate(item=gsub("vax_post_","", item)) %>%
+  mutate(item=gsub("vaxIntent_pre_","", item)) %>%
+  mutate(item=gsub("vaxIntent_post_","", item)) %>%
+  mutate(item=gsub("vax_post2_","", item)) %>%
+  mutate(item=gsub("vaxIntent_post2_","", item)) %>%
+  group_by(workerId, condition, phase, Scale, item) %>% # somehow got a duplicate row
+  filter(row_number(rating) == 1) %>% # so remove it
+  ungroup()
+
+# and reducing to a "summary" dataset
+# d_sum2 <- d2 %>%
+#   filter(Scale=="vaxAttitude") %>%
+#   group_by(workerId, condition, phase) %>%
+#   summarize(mean_rating = mean(rating)) %>%
+#   spread(phase, mean_rating) %>%
+#   mutate(change = posttest - pretest)
+  
+```
+
+### Plotting Raw data
+
+Plotting change scores relative to pretest at posttest and delayed posttest, it looks like disease risk is effective immediately, but not effect compared to control at delay.
+
+```{r}
+d2 %>%
+  filter(Scale == "vaxAttitude") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  mutate(
+    change = posttest - pretest,
+    change2 = posttest2 - pretest
+  ) %>%
+  gather(change_phase, Score, change, change2) %>%
+  group_by(condition, change_phase) %>%
+  summarize(
+    mean_score = mean(Score),
+    ul = mean(Score) + stderr(Score),
+    ll = mean(Score) - stderr(Score)
+  ) %>%
+  ggplot(aes(x = change_phase, y = mean_score, color = condition, ymin = ll, ymax = ul)) +
+  geom_point(stat = "identity", position = position_dodge(width = .5)) +
+  geom_errorbar(position = position_dodge(width = .5), width = .25)
+```
+
+However change scores have issues. Let's just look at the raw overall means across each phase to get a sense of things ...
+
+```{r}
+d2 %>%
+    filter(Scale=="vaxAttitude") %>%
+    group_by(workerId, condition, phase) %>%
+    summarize(mean_rating = mean(rating)) %>%
+    group_by(condition, phase) %>%
+    summarize(mean_resp = mean(mean_rating),
+               ul = mean(mean_rating) + stderr(mean_rating),
+              ll = mean(mean_rating) - stderr(mean_rating)) %>%
+  mutate(phase = factor(phase, levels = c("pretest","posttest","posttest2"))) %>%
+  ggplot(aes(x=phase, y = mean_resp, color = condition, ymin = ll, ymax = ul)) +
+  geom_point(stat="identity",position=position_dodge(width=.5)) +
+  geom_errorbar(position=position_dodge(width=.5), width=.25)
+
+```
+
+### Modeling
+
+First, let's model things using a beta regression. First, let's ask if there's a significant condition difference at delayed postest among the conditions, controlling for original pretest scores.
+
+From this, it looks like there is not. There's also no magical delayed backfire effect of autism correction.
+
+```{r}
+fit_beta2 <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
+                     data = d2 %>% 
+                       filter(Scale=="vaxAttitude") %>%
+                       group_by(workerId, condition, phase) %>%
+                       summarize(mean_rating = mean(rating)) %>%
+                       spread(phase, mean_rating)
+                     )
+
+summary(fit_beta2)
+```
+
+Now let's try to put everything together into one model. This model will predict both immediate and delayed posttest responses from pretest and condition, along with a "time" variable coding whether they are immediate or delayed responses. I'll let this interact with condition, since the change scores suggest the effects of time might be different in the different conditions.
+
+```{r}
+d2_sum <- d2 %>%
+  filter(Scale == "vaxAttitude") %>%
+  group_by(workerId, condition, phase) %>%
+  summarize(mean_rating = mean(rating)) %>%
+  spread(phase, mean_rating) %>%
+  gather(time, response, posttest, posttest2)
+
+# fit_beta2 <- brm(rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId), data = d2_sum )
+
+fit_brm_beta2 <- brm(
+  rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId),
+  data = d2_sum,
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+
+```
+
+```{r}
+summary(fit_brm_beta2)
+```
+
+```{r}
+
+gg_marginal_effects <- function(model, effects, probs=c(0.25, 0.75)) {
+  me <- marginal_effects(model, effects=effects, probs=c(.25,.75))
+  plt.me <- plot(me, 
+                  effects=effects,
+                  plot=FALSE,
+                  rug=TRUE,
+                  theme=ggplot2::theme_get()
+                  )[[1]] +
+    theme_minimal()
+} 
+
+gg_marginal_effects(fit_brm_beta2, "time:condition") %>% plot()
+
+```
+
+ Using the marignal effects plot lets us pull out the model predictions without having to worry about interpreting beta regression coefficients. Here I'm using 50% credible intervals. It looks like, at immediate test, disease risk shows a significant improvement over control and autism correction, as previously observed. At delayed test, it's fallen back down but it looks like it's still expected to be a bit better than control. I'll have to test that hypothesis inside the model somehow. Likewise, there's a hint that autism correction looks better than control in this sample/analysis, which I'll have to look at more closely.
+
+It's actually not that crazy. Let's also rerun the model as a hierarchical ordinal regression ...
+
+```{r}
+fit_brm_ord2 <- brm(
+  response ~ phase * condition + (1 | workerId) + (1|item),
+  data = d2 %>%
+    filter(Scale == "vaxAttitude") %>%
+    group_by(workerId, condition, phase) %>%
+    select(item, phase, condition, workerId, rating) %>%
+    spread(phase, rating) %>%
+    mutate(phase = relevel(factor(phase), ref = "pretest")) %>%
+    gather(phase, response, posttest, posttest2)
+    ,
+  family = cumulative(),
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_ord2)
+gg_marginal_effects(fit_brm_ord2, "phase:condition") %>% plot()
+```
+
+### predicting response
+
+Now that we have multiple posttest periods, it might be preferrable to use a model that predicts responses across all phases. This feels a bit less piecemeal than the past models.
+
+Model:
+
+```
+response ~ phase * condition + (1|participant)
+```
+
+
+```{r}
+fit_brm_beta2b <- brm(
+  rescale_beta(response, 1, 6) ~ phase * condition + (1 | workerId),
+  data = d2 %>%
+    filter(Scale == "vaxAttitude") %>%
+    mutate(phase = relevel(factor(phase), ref = "pretest")) %>%
+    group_by(workerId, condition, phase) %>%
+    summarize(response = mean(rating)),
+  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_beta2b)
+```
+
+```{r}
+
+gg_marginal_effects(fit_brm_beta2b, "phase:condition") %>% plot()
+```
+
+That seems like a pretty clear summary of the results, in a model that captures the pretest differences explicitly.
+
+Just to be safe, we can do it as a hierarchical ordinal model as well. 
+
+```{r}
+fit_brm_ord2b <- brm(
+  rating ~ phase * condition + (1 | workerId) + (1 | item),
+  data = d2 %>%
+    filter(Scale == "vaxAttitude") %>%
+    mutate(phase = factor(phase, levels = c("pretest","posttest","posttest2"))) %>%
+    select(workerId, item, phase, condition, rating),
+  family = cumulative(),
+  control = list(adapt_delta = .85),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
+```
+
+```{r}
+summary(fit_brm_ord2b)
+gg_marginal_effects(fit_brm_ord2b, "phase:condition") %>% plot()
+```
+
+So at the end of all that, it's not really all that clear what happened after a delay! The conclusions we'd draw seem to depend heavily on the analytic choices we make.
+
 ## Further analyses {.tabset}
 
 To be explored:
@@ -360,7 +639,7 @@ To be explored:
 
 ### Vaccine behavior: delay and refusal 
 
-How many parents have delayed, refused, or sought exemptions from vaccines? _I just observed that the exemption item was not coded correctly on Qualtrics, have corrected it there but will need to redownload data - 3/26/18, 3:48 PM._
+How many parents have delayed, refused, or sought exemptions from vaccines? _Sought exemptio items should now be fixed, 4/9/18, 10:43 AM)_.
 
 
 ```{r}
