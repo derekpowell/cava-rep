@@ -844,7 +844,7 @@ fit_brm_ord2_intent <- brm(
 
 ```{r}
 summary(fit_brm_ord2_intent)
-gg_marginal_effects(fit_brm_ord2_intent, "phase:condition") %>% plot()
+gg_marginal_effects(fit_brm_ord2_intent, "time:condition") %>% plot()
 ```
 
 ### Predicting response
@@ -868,19 +868,20 @@ fit_brm_beta2_resp_intent <- brm(
     summarize(response = mean(rating)),
   family = Beta(),
   sample_prior = TRUE,
-  control = list(adapt_delta = .85),
+  control = list(adapt_delta = .95),
   cores = parallel::detectCores(),
-  iter = 2000
+  iter = 2000,
+  save_model="fit_brm_beta2_resp_intent"
 )
 ```
 
 ```{r}
 summary(fit_brm_beta2_resp_intent)
+gg_marginal_effects(fit_brm_beta2_resp_intent, "phase:condition") %>% plot()
 ```
 
 ```{r}
 
-gg_marginal_effects(fit_brm_beta2_resp_intent, "phase:condition") %>% plot()
 ```
 
 That seems like a pretty clear summary of the results, in a model that captures the pretest differences explicitly.
@@ -888,20 +889,20 @@ That seems like a pretty clear summary of the results, in a model that captures 
 Just to be safe, we can do it as a hierarchical ordinal model as well. 
 
 ```{r}
-fit_brm_ord2_resp_intent <- brm(
-  rating ~ phase * condition + (1 | workerId) + (1 | item),
-  data = d2 %>%
-    filter(Scale == "vaxIntent") %>%
-    group_by(workerId, condition, phase) %>%
-    select(item, phase, condition, workerId, rating) %>%
-    ungroup() %>%
-    mutate(phase = relevel(factor(phase), ref = "pretest")),
-  family = cumulative(),
-  sample_prior = TRUE,
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
+# fit_brm_ord2_resp_intent <- brm(
+#   rating ~ phase * condition + (1 | workerId) + (1 | item),
+#   data = d2 %>%
+#     filter(Scale == "vaxIntent") %>%
+#     group_by(workerId, condition, phase) %>%
+#     select(item, phase, condition, workerId, rating) %>%
+#     ungroup() %>%
+#     mutate(phase = relevel(factor(phase), ref = "pretest")),
+#   family = cumulative(),
+#   sample_prior = TRUE,
+#   control = list(adapt_delta = .85),
+#   cores = parallel::detectCores(),
+#   iter = 2000
+# )
 ```
 
 ```{r}
