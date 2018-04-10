@@ -48,3 +48,6 @@ redact.R
 
 # Rpubs stuff
 /rsconnect/*
+
+# brms model cache
+/brms_models/*
