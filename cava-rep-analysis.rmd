@@ -18,6 +18,7 @@ This is an R notebook to analyze the data from the Countering AntiVaccination At
 # load packages
 library(tidyverse)
 library(brms)
+library(tidybayes)
 
 if (!require(betareg)) {
   install.packages("betareg")
@@ -62,9 +63,21 @@ rescale_beta <- function(x, lower, upper) {
   # see http://dx.doi.org/10.1037/1082-989X.11.1.54.supp
 
   N <- length(x)
-  res <- (x - lower) / (upper - lower)
-  res <- (res * (N - 1) + .5) / N
+  res <- (((x - lower) / (upper - lower)) * (N - 1) + .5) / N
 
+  return(as.vector(res))
+}
+
+inv_rescale_beta <- function(scaled_x, lower, upper) {
+  # inverts rescaling onto the open interval (0,1)
+  # assuming original rescaling over theoretical bounds of measurement, specified by "upper" and "lower"
+  # based on Smithson & Verkuilen (2006), though this is not as principled as you might think
+  # see http://dx.doi.org/10.1037/1082-989X.11.1.54.supp
+  
+  N <- length(scaled_x)
+
+  res <- (scaled_x * N - 1/2)/(N-1)
+  res <- res * (upper - lower) + lower
   return(as.vector(res))
 }
 
@@ -78,6 +91,8 @@ gg_marginal_effects <- function(model, effects, probs=c(0.25, 0.75)) {
                   )[[1]] +
     theme_minimal()
 } 
+
+devtools::source_gist(id = "f1994c0f8325abbc5d300600744af39d", filename="cbrm.R")
 
 ```
 
@@ -324,14 +339,15 @@ summary(fit_beta)
 We also conduct beta regression using bayesian estimation in BRMS.
 
 ```{r}
-fit_brm_beta <- brm(
+fit_brm_beta <- cbrm(
   rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
   data = d_sum,
-  family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  family = Beta(),
   sample_prior = TRUE,
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
+  control = list(adapt_delta = .99),
+  # cores = parallel::detectCores(),
+  iter = 3000,
+  cached_file = "fit_brm_beta.rds"
 )
 ```
 
@@ -347,10 +363,11 @@ gg_marginal_effects(fit_brm_beta, "condition") %>% plot()
 A final concern in all of the above analyses, on change scores or on posttest scores, is the use of "scores". That is, the averaging of several ordinal likert scale ratings into a continuous scale variable. Using hierarchical ordinal regression, we can avoid this averaging, and directly model the observed data. This accounts for the ordinal nature of the underlying response variable, as well as possible differences among scale items that are lost to averaging.
 
 ```{r}
-fit_brm_ord <- brm(
+fit_brm_ord <- cbrm(
   posttest ~ pretest + condition + (1 | workerId) + (1 | item),
   data = d %>% filter(Scale=="vaxAttitude") %>% spread(phase, rating),
   family = cumulative(), 
+  cached_file = "fit_brm_ord.rds",
   sample_prior = TRUE,
   control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
@@ -506,10 +523,11 @@ d2_sum <- d2 %>%
 
 # fit_beta2 <- brm(rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId), data = d2_sum )
 
-fit_brm_beta2 <- brm(
+fit_brm_beta2 <- cbrm(
   rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId),
   data = d2_sum,
   family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  cached_file = "fit_brm_beta2.rds",
   control = list(adapt_delta = .95),
   sample_prior = TRUE,
   cores = parallel::detectCores(),
@@ -529,7 +547,7 @@ Using the marignal effects plot lets us pull out the model predictions without h
 It's actually not that crazy. Let's also rerun the model as a hierarchical ordinal regression ...
 
 ```{r}
-fit_brm_ord2 <- brm(
+fit_brm_ord2 <- cbrm(
   response ~ phase * condition + (1 | workerId) + (1|item),
   data = d2 %>%
     filter(Scale == "vaxAttitude") %>%
@@ -540,6 +558,7 @@ fit_brm_ord2 <- brm(
     gather(phase, response, posttest, posttest2) %>%
     mutate(phase = relevel(factor(phase), ref = "posttest")),
   family = cumulative(),
+  cached_file = "fit_brm_ord2.rds",
   sample_prior = TRUE,
   control = list(adapt_delta = .85),
   cores = parallel::detectCores(),
@@ -549,7 +568,8 @@ fit_brm_ord2 <- brm(
 
 ```{r}
 summary(fit_brm_ord2)
-gg_marginal_effects(fit_brm_ord2, "phase:condition") %>% plot()
+hypothesis(fit_brm_ord2, "conditionDiseaseRisk + phaseposttest2:conditionDiseaseRisk > 0")
+# maybe look directly at posterior distributions? chance to try tidybayes?
 ```
 
 ### Predicting response
@@ -564,7 +584,7 @@ response ~ phase * condition + (1|participant)
 
 
 ```{r}
-fit_brm_beta2b <- brm(
+fit_brm_beta2_resp <- cbrm(
   rescale_beta(response, 1, 6) ~ phase * condition + (1 | workerId),
   data = d2 %>%
     filter(Scale == "vaxAttitude") %>%
@@ -572,20 +592,18 @@ fit_brm_beta2b <- brm(
     group_by(workerId, condition, phase) %>%
     summarize(response = mean(rating)),
   family = Beta(),
+  seed = 12345,
+  cached_file = "fit_brm_beta2_resp.rds",
   sample_prior = TRUE,
-  control = list(adapt_delta = .85),
+  control = list(adapt_delta = .95),
   cores = parallel::detectCores(),
   iter = 2000
 )
 ```
 
 ```{r}
-summary(fit_brm_beta2b)
-```
-
-```{r}
-
-gg_marginal_effects(fit_brm_beta2b, "phase:condition") %>% plot()
+summary(fit_brm_beta2_resp)
+gg_marginal_effects(fit_brm_beta2_resp, "phase:condition") %>% plot()
 ```
 
 That seems like a pretty clear summary of the results, in a model that captures the pretest differences explicitly.
@@ -608,8 +626,8 @@ Just to be safe, we can do it as a hierarchical ordinal model as well.
 ```
 
 ```{r}
-summary(fit_brm_ord2b)
-gg_marginal_effects(fit_brm_ord2b, "phase:condition") %>% plot()
+# summary(fit_brm_ord2b)
+# gg_marginal_effects(fit_brm_ord2b, "phase:condition") %>% plot()
 ```
 
 So at the end of all that, it's not really all that clear what happened after a delay! The conclusions we'd draw seem to depend heavily on the analytic choices we make.
@@ -707,12 +725,13 @@ summary(fit_beta_intent)
 Again, this is likely the most appropriate analysis for these data.
 
 ```{r}
-fit_brm_ord_intent <- brm(
+fit_brm_ord_intent <- cbrm(
   posttest ~ pretest + condition + (1 | workerId) + (1 | item),
-  data = d %>% filter(Scale=="vaxIntent") %>% spread(phase, rating),
+  data = d %>% filter(Scale == "vaxIntent") %>% spread(phase, rating),
   family = cumulative(), # student(), #cumulative(), #bernoulli(), etc
   sample_prior = TRUE,
-  control = list(adapt_delta = .85),
+  cached_file = "fit_brm_ord_intent.rds",
+  control = list(adapt_delta = .95),
   cores = parallel::detectCores(),
   iter = 2000
 )
@@ -720,6 +739,7 @@ fit_brm_ord_intent <- brm(
 
 ```{r}
 summary(fit_brm_ord_intent)
+# gg_marginal_effects(fit_brm_ord_intent, "condition") %>% plot()
 ```
 
 ## Delayed post-test and vaccine intentions
@@ -777,7 +797,7 @@ First, let's model things using a beta regression. First, let's ask if there's a
 From this, it looks like it's close but not quite for disease risk.
 
 ```{r}
-fit_beta2 <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
+fit_beta_intent <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
                      data = d2 %>% 
                        filter(Scale=="vaxIntent") %>%
                        group_by(workerId, condition, phase) %>%
@@ -785,8 +805,29 @@ fit_beta2 <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
                        spread(phase, mean_rating)
                      )
 
-summary(fit_beta2)
+summary(fit_beta_intent)
 ```
+
+```{r}
+# fit_brm_beta_intent_delay <- cbrm(
+#   rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
+#   data = d2 %>% 
+#     filter(Scale == "vaxIntent") %>%
+#     group_by(workerId, condition, phase) %>%
+#     summarize(mean_rating = mean(rating)) %>%
+#     spread(phase, mean_rating),
+#   family = Beta(),
+#   prior = c(set_prior("normal(0,.5)", coef = "conditionDiseaseRisk"),
+#             set_prior("normal(0,.5)", coef = "conditionAutismCorrection")),
+#   cached_file = "fit_brm_beta_intent_delay.rds",
+#   sample_prior = TRUE,
+#   control = list(adapt_delta = .99),
+#   cores = parallel::detectCores(),
+#   iter = 3000,
+#   warmup = 2000
+# )
+```
+
 
 Now let's try to put everything together into one model. This model will predict both immediate and delayed posttest responses from pretest and condition, along with a "time" variable coding whether they are immediate or delayed responses. I'll let this interact with condition, since the change scores suggest the effects of time might be different in the different conditions.
 
@@ -798,14 +839,15 @@ d2_sum <- d2 %>%
   spread(phase, mean_rating) %>%
   gather(time, response, posttest, posttest2)
 
-# fit_beta2 <- brm(rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId), data = d2_sum )
-
-fit_brm_beta2_intent <- brm(
+fit_brm_beta_intent <- cbrm(
   rescale_beta(response,1,6) ~ scale(pretest) + time * condition + (1|workerId),
   data = d2_sum,
   family = Beta(), # student(), #cumulative(), #bernoulli(), etc
+  prior = c(prior(normal(0,1), class = b), 
+            prior(normal(0,5), coef=scalepretest)),
+  cached_file = "fit_brm_beta_intent.rds",
   sample_prior = TRUE,
-  control = list(adapt_delta = .85),
+  control = list(adapt_delta = .95),
   cores = parallel::detectCores(),
   iter = 2000
 )
@@ -813,38 +855,45 @@ fit_brm_beta2_intent <- brm(
 ```
 
 ```{r}
-summary(fit_brm_beta2_intent)
-```
+summary(fit_brm_beta_intent)
+gg_marginal_effects(fit_brm_beta_intent, "time:condition") %>% plot()
 
-```{r}
-
-gg_marginal_effects(fit_brm_beta2, "time:condition") %>% plot()
-
+# test P that diseaseRisk differs from control at T2, after controlling for pretest scores
+fit_brm_beta_intent %>%
+  spread_samples(b_timeposttest2, 
+                 b_conditionDiseaseRisk, 
+                 `b_timeposttest2:conditionDiseaseRisk`) %>%
+  mutate(time2_effect = b_conditionDiseaseRisk + `b_timeposttest2:conditionDiseaseRisk`) %>%
+  gather(term, estimate, b_timeposttest2:time2_effect) %>%
+  group_by(term) %>%
+  summarize(p_above_zero = sum(ifelse(estimate > 0, 1, 0)) / n()) %>%
+  filter(term == "time2_effect")
 ```
 
 Using the marignal effects plot lets us pull out the model predictions without having to worry about interpreting beta regression coefficients. Here I'm using 50% credible intervals. It looks like, at immediate test, disease risk shows a significant improvement over control and autism correction, as previously observed. At delayed test, it's fallen back down but it looks like it's still expected to be better than control. I'll have to test that hypothesis inside the model somehow. Likewise, there's a hint that autism correction looks better than control in this sample/analysis, which I'll have to look at more closely.
 
 ```{r}
  
-fit_brm_ord2_intent <- brm(
-  response ~ pretest + time * condition + (1 | workerId) + (1|item),
-  data = d2 %>%
-    filter(Scale == "vaxIntent") %>%
-    group_by(workerId, condition, phase) %>%
-    select(item, phase, condition, workerId, rating) %>%
-    spread(phase, rating) %>%
-    gather(time, response, posttest, posttest2),
-  family = cumulative(),
-  sample_prior = TRUE,
-  control = list(adapt_delta = .85),
-  cores = parallel::detectCores(),
-  iter = 2000
-)
+# fit_brm_ord_intent <- cbrm(
+#   response ~ pretest + time * condition + (1 | workerId) + (1|item),
+#   data = d2 %>%
+#     filter(Scale == "vaxIntent") %>%
+#     group_by(workerId, condition, phase) %>%
+#     select(item, phase, condition, workerId, rating) %>%
+#     spread(phase, rating) %>%
+#     gather(time, response, posttest, posttest2),
+#   family = cumulative(),
+#   cached_file = "fit_brm_ord_intent.rds",
+#   sample_prior = TRUE,
+#   control = list(adapt_delta = .85),
+#   cores = parallel::detectCores(),
+#   iter = 2000
+# )
 ```
 
 ```{r}
-summary(fit_brm_ord2_intent)
-gg_marginal_effects(fit_brm_ord2_intent, "time:condition") %>% plot()
+# summary(fit_brm_ord_intent)
+# gg_marginal_effects(fit_brm_ord_intent, "time:condition") %>% plot()
 ```
 
 ### Predicting response
@@ -859,7 +908,7 @@ response ~ phase * condition + (1|participant)
 
 
 ```{r}
-fit_brm_beta2_resp_intent <- brm(
+fit_brm_beta_resp_intent <- cbrm(
   rescale_beta(response, 1, 6) ~ phase * condition + (1 | workerId),
   data = d2 %>%
     filter(Scale == "vaxIntent") %>%
@@ -867,21 +916,17 @@ fit_brm_beta2_resp_intent <- brm(
     group_by(workerId, condition, phase) %>%
     summarize(response = mean(rating)),
   family = Beta(),
+  cached_file = "fit_brm_beta_resp_intent.rds",
   sample_prior = TRUE,
   control = list(adapt_delta = .95),
   cores = parallel::detectCores(),
-  iter = 2000,
-  save_model="fit_brm_beta2_resp_intent"
+  iter = 2000
 )
 ```
 
 ```{r}
-summary(fit_brm_beta2_resp_intent)
-gg_marginal_effects(fit_brm_beta2_resp_intent, "phase:condition") %>% plot()
-```
-
-```{r}
-
+# summary(fit_brm_beta_resp_intent)
+# gg_marginal_effects(fit_brm_beta_resp_intent, "phase:condition") %>% plot()
 ```
 
 That seems like a pretty clear summary of the results, in a model that captures the pretest differences explicitly.
@@ -889,25 +934,26 @@ That seems like a pretty clear summary of the results, in a model that captures 
 Just to be safe, we can do it as a hierarchical ordinal model as well. 
 
 ```{r}
-# fit_brm_ord2_resp_intent <- brm(
-#   rating ~ phase * condition + (1 | workerId) + (1 | item),
-#   data = d2 %>%
-#     filter(Scale == "vaxIntent") %>%
-#     group_by(workerId, condition, phase) %>%
-#     select(item, phase, condition, workerId, rating) %>%
-#     ungroup() %>%
-#     mutate(phase = relevel(factor(phase), ref = "pretest")),
-#   family = cumulative(),
-#   sample_prior = TRUE,
-#   control = list(adapt_delta = .85),
-#   cores = parallel::detectCores(),
-#   iter = 2000
-# )
+fit_brm_ord2_resp_intent <- cbrm(
+  rating ~ phase * condition + (1 | workerId) + (1 | item),
+  data = d2 %>%
+    filter(Scale == "vaxIntent") %>%
+    group_by(workerId, condition, phase) %>%
+    select(item, phase, condition, workerId, rating) %>%
+    ungroup() %>%
+    mutate(phase = relevel(factor(phase), ref = "pretest")),
+  family = cumulative(),
+  cached_file = "fit_brm_ord2_resp_intent.rds",
+  sample_prior = TRUE,
+  control = list(adapt_delta = .95),
+  cores = parallel::detectCores(),
+  iter = 2000
+)
 ```
 
 ```{r}
-summary(fit_brm_ord2_resp_intent)
-gg_marginal_effects(fit_brm_ord2_resp_intent, "phase:condition") %>% plot()
+# summary(fit_brm_ord2_resp_intent)
+# gg_marginal_effects(fit_brm_ord2_resp_intent, "phase:condition") %>% plot()
 ```
 
 So at the end of all that, it's not really all that clear what happened after a delay! The conclusions we'd draw seem to depend heavily on the analytic choices we make.
