@@ -18,7 +18,7 @@ This is an R notebook to analyze the data from the Countering AntiVaccination At
 # load packages
 library(tidyverse)
 library(brms)
-library(tidybayes)
+# library(tidybayes)
 
 if (!require(betareg)) {
   install.packages("betareg")
