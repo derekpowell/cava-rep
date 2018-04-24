@@ -1148,6 +1148,15 @@ This study successfully replicated the original findings of the _PNAS_ paper acc
 
 A participante noticed a typo in the "confident" vaccine Intent item, it said "... in the right thing to do" when it should have said "... is the right thing to do".
 
+(crude) Power analysis for future intervention studies below (April 23, 2018):
+
+```{r}
+eff_size <- coefficients(fit_lm)/sigma(fit_lm)
+
+power.t.test(delta = eff_size[4], power = .80)
+```
+
+
 ### Replication notes
 
 Analyses can be replicated using `derekpowell/rstudio-dmp:20180321` Docker image.
