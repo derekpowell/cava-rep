@@ -797,7 +797,7 @@ First, let's model things using a beta regression. First, let's ask if there's a
 From this, it looks like it's close but not quite for disease risk.
 
 ```{r}
-fit_beta_intent <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
+fit_beta_intent2 <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + condition,
                      data = d2 %>% 
                        filter(Scale=="vaxIntent") %>%
                        group_by(workerId, condition, phase) %>%
@@ -805,8 +805,9 @@ fit_beta_intent <- betareg(rescale_beta(posttest2, 1, 6) ~ scale(pretest) + cond
                        spread(phase, mean_rating)
                      )
 
-summary(fit_beta_intent)
+summary(fit_beta_intent2)
 ```
+
 
 ```{r}
 # fit_brm_beta_intent_delay <- cbrm(
@@ -1148,14 +1149,57 @@ This study successfully replicated the original findings of the _PNAS_ paper acc
 
 A participante noticed a typo in the "confident" vaccine Intent item, it said "... in the right thing to do" when it should have said "... is the right thing to do".
 
-(crude) Power analysis for future intervention studies below (April 23, 2018):
+Power analysis for future intervention studies below (April 24, 2018):
 
 ```{r}
-eff_size <- coefficients(fit_lm)/sigma(fit_lm)
+# power analysis simulations!
 
-power.t.test(delta = eff_size[4], power = .80)
+d_sum_power_sim <- d_sum_intent %>%
+  filter(condition != "Autism Correction") %>%
+  group_by(condition)
+
+sample_sizes <- seq(25,400,25)
+boot_n <- 250
+iters <- seq(1, boot_n*length(sample_sizes), 1)
+sample_sizes_vec <- rep(sample_sizes, each = boot_n)
+t_values <- rep(NA,length(iters))
+
+for (i in iters) {
+  s <- sample_sizes_vec[i]
+  d_samp <- dplyr::sample_n(d_sum_power_sim, size=s, replace=TRUE)
+  f <- betareg(
+    rescale_beta(posttest, 1, 6) ~ scale(pretest) + condition,
+    data = d_samp
+    )
+  res <- broom::tidy(f)
+  t_val <- res %>%
+    filter(term=="conditionDisease Risk") %>%
+    select(statistic)
+  
+  t_values[i] <- t_val
+}
+
 ```
 
+```{r}
+power_data <- data.frame(iter = iters, sample_size = sample_sizes_vec, t_value = as.numeric(t_values))
+
+power_data %>%
+  mutate(p_value = 2 * pt(-abs(t_value), sample_size - 1)) %>%
+  mutate(sig = ifelse((p_value < .05) & (t_value > 0), 1, 0)) %>%
+  group_by(sample_size) %>%
+  summarize(sig_prop = sum(sig) / n()) %>%
+  mutate(
+    LL = sig_prop - sqrt(sig_prop * (1 - sig_prop) / boot_n),
+    UL = sig_prop + sqrt(sig_prop * (1 - sig_prop) / boot_n)
+  ) %>%
+  ggplot(aes(x = sample_size, y = sig_prop, ymax = UL, ymin = LL)) +
+  geom_ribbon(alpha = .25) +
+  geom_line() +
+  geom_hline(yintercept = .8, linetype = "dashed", color = "red") +
+  ylim(0, 1)
+
+```
 
 ### Replication notes
 
